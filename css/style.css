@@ -193,7 +193,9 @@ svg.i {
 }
 
 .speed-value {
-  min-width: 1.3ch;
+  /* Platz für drei Ziffern, damit sich das Cockpit bei 100 km/h nicht verbreitert. */
+  min-width: 2.8ch;
+  text-align: right;
   font-size: 84px;
   font-weight: 800;
   line-height: 0.9;
@@ -224,12 +226,12 @@ svg.i {
   min-width: 0;
 }
 
+/* Hochformat: Uhrzeit über der Höhe – feste Höhe, damit die Karte nicht springt. */
 .time-row {
   display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  align-items: baseline;
-  gap: 6px 12px;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
 }
 
 .clock {
@@ -297,7 +299,12 @@ svg.i {
     padding-top: 10px;
   }
 
-  .time-row,
+  .time-row {
+    flex-direction: row;
+    align-items: baseline;
+    gap: 12px;
+  }
+
   .chips {
     justify-content: flex-start;
   }
