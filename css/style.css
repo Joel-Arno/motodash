@@ -446,6 +446,7 @@ svg.i {
   transform: translateY(-50%);
   display: flex;
   flex-direction: column;
+  align-items: flex-end;
   gap: 10px;
 }
 
@@ -2140,4 +2141,154 @@ svg.i {
 
 .setting .error {
   margin-bottom: 10px;
+}
+
+/* ---------- Aufnahme-Knopf ---------- */
+
+:root[data-cockpit="left"] .fabs {
+  align-items: flex-start;
+}
+
+.fab-record {
+  width: auto;
+  min-width: 60px;
+  padding: 0 14px;
+  gap: 8px;
+  display: flex;
+  justify-content: center;
+}
+
+.rec-dot {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #ff3b3b;
+  box-shadow: 0 0 0 3px rgba(255, 59, 59, 0.25);
+}
+
+.fab-record.is-recording {
+  background: #ff3b3b;
+  color: #ffffff;
+}
+
+.fab-record.is-recording .rec-dot {
+  width: 14px;
+  height: 14px;
+  background: #ffffff;
+  box-shadow: none;
+  animation: rec-pulse 1.2s ease-in-out infinite;
+}
+
+.rec-time {
+  font-size: 18px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.rec-label {
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.fab-record.is-confirm {
+  background: var(--panel);
+  color: #ff3b3b;
+  border: 2px solid #ff3b3b;
+}
+
+@keyframes rec-pulse {
+  50% {
+    opacity: 0.25;
+  }
+}
+
+/* ---------- Auswertung: Karte & Fahrtenbuch ---------- */
+
+.sum-map-wrap {
+  margin: 4px 0 12px;
+}
+
+.sum-map {
+  height: 220px;
+  overflow: hidden;
+  border-radius: 16px;
+  background: var(--panel-2);
+}
+
+.speed-legend {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.speed-legend-bar {
+  flex: 1;
+  height: 6px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #3ddc84, #ffd24d 35%, #ff7a1a 70%, #ff3b3b);
+}
+
+.summary-delete {
+  margin-top: 12px;
+  color: var(--bad);
+}
+
+.summary-delete.is-confirm {
+  background: var(--bad);
+  color: #ffffff;
+}
+
+.rides-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ride-row {
+  width: 100%;
+  min-height: 64px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+  padding: 10px 14px;
+  border-radius: 16px;
+  background: var(--panel-2);
+  text-align: left;
+}
+
+.ride-icon {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--panel);
+  color: #4f9dff;
+}
+
+.ride-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.ride-icon .rec-dot {
+  width: 14px;
+  height: 14px;
+}
+
+.ride-row .row-text {
+  display: flex;
+  flex-direction: column;
+}
+
+.ride-km {
+  flex: none;
+  font-size: 17px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
 }
