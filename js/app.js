@@ -1,13 +1,13 @@
 import * as maplibregl from 'https://cdn.jsdelivr.net/npm/maplibre-gl@6.9.1/dist/maplibre-gl.mjs';
 // Die ?v=… Anhänge sorgen dafür, dass das iPhone nach einem Update die neuen Dateien lädt.
 // Bei jeder Änderung APP_VERSION und alle ?v= (in allen js-Dateien und index.html) gemeinsam erhöhen.
-import { buildStyle } from './map-style.js?v=1.2';
-import { DemoRide } from './demo.js?v=1.2';
-import { angleDiff, bearing, distance } from './geo.js?v=1.2';
-import { createPlanner } from './planner.js?v=1.2';
-import { fetchRoutes, RouteProgress } from './routing.js?v=1.2';
+import { buildStyle } from './map-style.js?v=1.2.1';
+import { DemoRide } from './demo.js?v=1.2.1';
+import { angleDiff, bearing, distance } from './geo.js?v=1.2.1';
+import { createPlanner } from './planner.js?v=1.2.1';
+import { fetchRoutes, RouteProgress } from './routing.js?v=1.2.1';
 
-const APP_VERSION = '1.2';
+const APP_VERSION = '1.2.1';
 const ARRIVAL_METERS = 30;
 
 const $ = (id) => document.getElementById(id);
@@ -516,7 +516,9 @@ function routeGeoJSON() {
 }
 
 function renderRoute() {
-  map.getSource('route')?.setData(routeGeoJSON());
+  const source = map.getSource('route');
+  if (source) source.setData(routeGeoJSON());
+  else map.once('style.load', renderRoute); // Karte lädt noch – danach zeichnen
 }
 
 function renderStopMarkers() {

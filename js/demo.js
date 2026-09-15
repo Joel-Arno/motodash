@@ -1,8 +1,8 @@
 // Simulierte Fahrt entlang einer festen Strecke – zum Testen ohne Motorrad.
 // Liefert Positionen im selben Format wie das echte GPS.
 
-import { angleDiff, bearing, distance } from './geo.js?v=1.2';
-import DEMO_ROUTE from './demo-route.js?v=1.2';
+import { angleDiff, bearing, distance } from './geo.js?v=1.2.1';
+import DEMO_ROUTE from './demo-route.js?v=1.2.1';
 
 const TICK_MS = 1000;
 const MAX_SPEED = 100 / 3.6; // m/s

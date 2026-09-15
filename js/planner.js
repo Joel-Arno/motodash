@@ -1,6 +1,6 @@
 // „Ziel“-Fenster: Ziel suchen, Zwischenziele, Favoriten, Routen-Optionen.
 
-import { reversePlace, searchPlaces } from './search.js?v=1.2';
+import { reversePlace, searchPlaces } from './search.js?v=1.2.1';
 
 const FAVORITES_KEY = 'motodash.favorites';
 const SEARCH_DELAY_MS = 300;

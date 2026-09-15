@@ -1,7 +1,7 @@
 // Routenberechnung über Valhalla (FOSSGIS-Server, kostenlos, mit Motorrad-Profil)
 // und Fortschritt entlang einer aktiven Route.
 
-import { distance } from './geo.js?v=1.2';
+import { distance } from './geo.js?v=1.2.1';
 
 const VALHALLA_URL = 'https://valhalla1.openstreetmap.de/route';
 
