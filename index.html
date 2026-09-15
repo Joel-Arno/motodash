@@ -13,8 +13,8 @@
   <link rel="icon" href="icons/icon-192.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@6.9.1/dist/maplibre-gl.css">
-  <link rel="stylesheet" href="css/style.css?v=1.3">
-  <script type="module" src="js/app.js?v=1.3"></script>
+  <link rel="stylesheet" href="css/style.css?v=1.4">
+  <script type="module" src="js/app.js?v=1.4"></script>
 </head>
 <body>
   <div id="app">
@@ -25,6 +25,21 @@
         <b>DEMO</b><span>Beenden</span>
         <svg class="i" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
       </button>
+
+      <div id="nav-banner" class="nav-banner" role="status" hidden>
+        <div class="nb-main">
+          <div id="nb-icon" class="nb-icon"></div>
+          <div class="nb-text">
+            <div id="nb-distance" class="nb-distance"></div>
+            <div id="nb-title" class="nb-title"></div>
+          </div>
+        </div>
+        <div id="nb-then" class="nb-then" hidden>
+          <span class="nb-then-label">Danach</span>
+          <span id="nb-then-icon" class="nb-then-icon"></span>
+          <span id="nb-then-text"></span>
+        </div>
+      </div>
 
       <div id="route-chooser" class="chooser" hidden>
         <div class="chooser-head">
@@ -58,6 +73,7 @@
       <div id="toast" class="toast" role="status" hidden></div>
 
       <div class="fabs">
+        <button id="btn-voice" class="fab" aria-label="Sprachansagen" hidden></button>
         <button id="btn-zoom-in" class="fab" aria-label="Hineinzoomen">
           <svg class="i" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
         </button>
@@ -73,7 +89,10 @@
     <aside id="panel">
       <div class="speedo">
         <div id="speed" class="speed-value">–</div>
-        <div class="speed-unit">km/h</div>
+        <div class="speed-side">
+          <div id="speed-limit" class="limit-sign" aria-label="Tempolimit" hidden></div>
+          <div class="speed-unit">km/h</div>
+        </div>
       </div>
 
       <div class="meta">
