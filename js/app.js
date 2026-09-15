@@ -4,10 +4,11 @@ import * as maplibregl from 'https://cdn.jsdelivr.net/npm/maplibre-gl@6.9.1/dist
 import { buildStyle } from './map-style.js?v=1.2.1';
 import { DemoRide } from './demo.js?v=1.2.1';
 import { angleDiff, bearing, distance } from './geo.js?v=1.2.1';
-import { createPlanner } from './planner.js?v=1.2.1';
-import { fetchRoutes, RouteProgress } from './routing.js?v=1.2.1';
+import { createPlanner } from './planner.js?v=1.3';
+import { fetchRoutes, RouteProgress } from './routing.js?v=1.3';
+import { findRoundTrips } from './tours.js?v=1.3';
 
-const APP_VERSION = '1.2.2';
+const APP_VERSION = '1.3';
 const ARRIVAL_METERS = 30;
 
 const $ = (id) => document.getElementById(id);
@@ -49,7 +50,8 @@ const view = { lng: null, lat: null, heading: null, zoom: 16 };
 const anim = { from: null, to: null, start: 0, duration: 1000, lastTargetAt: 0, raf: 0 };
 const wake = { lock: null, wanted: false };
 // phase: null (keine Route) | 'choose' (Routen zur Auswahl) | 'active' (Route wird gefahren)
-const routeState = { phase: null, routes: [], selected: 0, stops: [], progress: null, markers: [] };
+// tour: bei Rundtouren die Anfrage (für „Neue Vorschläge“), sonst null
+const routeState = { phase: null, routes: [], selected: 0, stops: [], progress: null, markers: [], tour: null };
 const clockFormat = new Intl.DateTimeFormat('de-DE', { hour: '2-digit', minute: '2-digit' });
 
 let map;
@@ -113,7 +115,6 @@ function init() {
   });
 
   $('btn-live').addEventListener('click', () => start('live'));
-  $('btn-demo').addEventListener('click', () => start('demo'));
   $('demo-badge').addEventListener('click', stop);
   $('btn-zoom-in').addEventListener('click', () => zoomBy(1));
   $('btn-zoom-out').addEventListener('click', () => zoomBy(-1));
@@ -136,14 +137,18 @@ function init() {
   });
 
   planner = createPlanner({
-    getOrigin: () => (state.lastFix ? { lng: state.lastFix.lng, lat: state.lastFix.lat } : null),
+    getOrigin: currentPosition,
     routeOptions: settings.route,
     onOptionsChange: (options) => {
       settings.route = options;
       saveSettings();
     },
     onCalculate: showRouteChoices,
+    plan: settings.plan,
+    onPlanChange: saveSettings,
+    onTourCalculate: showTourChoices,
   });
+  $('route-reroll').addEventListener('click', rerollTours);
   $('btn-route').addEventListener('click', () => planner.open());
   $('route-start').addEventListener('click', startRoute);
   $('route-edit').addEventListener('click', () => planner.open());
@@ -153,7 +158,14 @@ function init() {
     if (routeState.phase === 'choose') selectRoute(e.features[0].properties.index);
   });
 
-  $('btn-settings').addEventListener('click', () => ($('settings').hidden = false));
+  $('btn-settings').addEventListener('click', openSettings);
+  $('start-settings').addEventListener('click', openSettings);
+  $('settings-demo').addEventListener('click', () => {
+    $('settings').hidden = true;
+    const wasDemo = state.mode === 'demo';
+    if (state.mode) stop();
+    if (!wasDemo) start('demo');
+  });
   $('settings-close').addEventListener('click', () => ($('settings').hidden = true));
   $('settings').addEventListener('click', (e) => {
     if (e.target === e.currentTarget) $('settings').hidden = true;
@@ -435,12 +447,46 @@ function zoomBy(delta) {
 
 async function showRouteChoices(points, options) {
   const routes = await fetchRoutes(points, options);
-  Object.assign(routeState, { phase: 'choose', routes, selected: 0, stops: points.slice(1), progress: null });
+  presentChoices({ routes, stops: points.slice(1), tour: null });
+}
+
+async function showTourChoices(spec, options, onProgress) {
+  const origin = currentPosition();
+  if (!origin) throw new Error('Noch kein GPS-Signal – bitte kurz warten.');
+  const tours = await findRoundTrips(origin, spec, options, onProgress);
+  // Die Zielfahne steht bei Rundtouren am Start.
+  presentChoices({ routes: tours, stops: [origin], tour: { origin, spec, options } });
+}
+
+/** Andere Rundtouren mit denselben Einstellungen. */
+async function rerollTours() {
+  const { tour } = routeState;
+  if (!tour) return;
+  const controls = ['route-reroll', 'route-start', 'route-edit', 'route-cancel'].map($);
+  controls.forEach((button) => (button.disabled = true));
+  try {
+    const tours = await findRoundTrips(tour.origin, tour.spec, tour.options, (done, total) => {
+      $('route-chooser-title').textContent = `Suche neue Touren … ${done}/${total}`;
+    });
+    if (routeState.phase === 'choose') presentChoices({ routes: tours, stops: [tour.origin], tour });
+  } catch (err) {
+    showToast(err.message, { error: true });
+  } finally {
+    controls.forEach((button) => (button.disabled = false));
+    if (routeState.phase === 'choose') $('route-chooser-title').textContent = 'Rundtour wählen';
+  }
+}
+
+function presentChoices({ routes, stops, tour }) {
+  Object.assign(routeState, { phase: 'choose', routes, selected: 0, stops, progress: null, tour });
 
   $('route-info').hidden = true;
   $('route-chooser').hidden = false;
   $('app').classList.add('is-choosing');
-  $('route-start-label').textContent = routes.length > 1 ? 'Diese Route starten' : 'Route starten';
+  $('route-chooser-title').textContent = tour ? 'Rundtour wählen' : 'Route wählen';
+  $('route-reroll').hidden = !tour;
+  const noun = tour ? 'Tour' : 'Route';
+  $('route-start-label').textContent = routes.length > 1 ? `Diese ${noun} starten` : `${noun} starten`;
   renderRouteChoices();
   renderRoute();
   renderStopMarkers();
@@ -470,7 +516,7 @@ function startRoute() {
 
 /** @param keepStops true = Ziele bleiben im Planer zum Bearbeiten erhalten */
 function clearRoute({ keepStops = false } = {}) {
-  Object.assign(routeState, { phase: null, routes: [], selected: 0, stops: [], progress: null });
+  Object.assign(routeState, { phase: null, routes: [], selected: 0, stops: [], progress: null, tour: null });
   if (!keepStops) planner?.clearStops();
   $('route-chooser').hidden = true;
   $('app').classList.remove('is-choosing');
@@ -487,8 +533,9 @@ function updateRouteProgress() {
   $('route-eta').textContent = clockFormat.format(new Date(Date.now() + remainingSeconds * 1000));
   $('route-remaining').textContent = `${formatDistance(remainingMeters)} · ${formatDuration(remainingSeconds)}`;
   if (remainingMeters < ARRIVAL_METERS) {
+    const wasTour = Boolean(routeState.tour);
     clearRoute();
-    showToast('Ziel erreicht');
+    showToast(wasTour ? 'Rundtour geschafft' : 'Ziel erreicht');
   }
 }
 
@@ -548,8 +595,10 @@ function renderRouteChoices() {
       card.querySelector('.rc-time').textContent = formatDuration(route.timeSeconds);
       distanceLine.textContent = formatDistance(route.lengthMeters);
       arrivalLine.textContent = `an ${clockFormat.format(new Date(now + route.timeSeconds * 1000))}`;
+      const isTour = Boolean(routeState.tour);
       const tags = [
-        index === 0 && routeState.routes.length > 1 && 'Empfohlen',
+        isTour && route.directionLabel,
+        !isTour && index === 0 && routeState.routes.length > 1 && 'Empfohlen',
         route.hasHighway && 'Autobahn',
         route.hasToll && 'Maut',
         route.hasFerry && 'Fähre',
@@ -616,9 +665,14 @@ function formatDuration(seconds) {
   return `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, '0')} h`;
 }
 
+function currentPosition() {
+  return state.lastFix ? { lng: state.lastFix.lng, lat: state.lastFix.lat } : null;
+}
+
 let toastTimer = 0;
-function showToast(text) {
+function showToast(text, { error = false } = {}) {
   $('toast').textContent = text;
+  $('toast').classList.toggle('is-error', error);
   $('toast').hidden = false;
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => ($('toast').hidden = true), 4000);
@@ -684,6 +738,11 @@ function renderButtons() {
   $('btn-settings').innerHTML = `${ICONS.settings}<span>Einstellungen</span>`;
 }
 
+function openSettings() {
+  $('settings-demo').textContent = state.mode === 'demo' ? 'Demo beenden' : 'Demo-Fahrt starten';
+  $('settings').hidden = false;
+}
+
 /** Cockpit-Seite im Querformat (links/rechts). */
 function applyLayout() {
   document.documentElement.dataset.cockpit = settings.cockpit;
@@ -720,6 +779,7 @@ function loadSettings() {
     view: 'heading',
     cockpit: 'right',
     route: { avoidHighways: false, avoidTolls: false, avoidFerries: false },
+    plan: { mode: 'dest', unit: 'km', km: 100, hours: 2, direction: null },
   };
   try {
     return { ...defaults, ...JSON.parse(localStorage.getItem(SETTINGS_KEY)) };

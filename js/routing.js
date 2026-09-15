@@ -6,7 +6,8 @@ import { distance } from './geo.js?v=1.2.1';
 const VALHALLA_URL = 'https://valhalla1.openstreetmap.de/route';
 
 /**
- * @param {{lng:number, lat:number}[]} points Start, Zwischenziele, Ziel
+ * @param {{lng:number, lat:number, via?:boolean}[]} points Start, Zwischenziele, Ziel.
+ *   `via` = unsichtbarer Wegpunkt, durch den nur hindurchgefahren wird (für Rundtouren).
  * @param {{avoidHighways?:boolean, avoidTolls?:boolean, avoidFerries?:boolean}} options
  * @returns {Promise<Route[]>} beste Route zuerst, bei nur zwei Punkten bis zu zwei Alternativen
  */
@@ -17,7 +18,12 @@ export async function fetchRoutes(points, options = {}) {
   if (options.avoidFerries) motorcycle.use_ferry = 0;
 
   const request = {
-    locations: points.map((p) => ({ lat: p.lat, lon: p.lng })),
+    locations: points.map((p) =>
+      p.via
+        ? // Nur an richtige Straßen andocken, nicht an Feld- oder Waldwege.
+          { lat: p.lat, lon: p.lng, type: 'through', search_filter: { min_road_class: 'tertiary' } }
+        : { lat: p.lat, lon: p.lng },
+    ),
     costing: 'motorcycle',
     costing_options: { motorcycle },
     // Alternativen berechnet Valhalla nur ohne Zwischenziele.
@@ -97,7 +103,15 @@ export function decodePolyline(encoded, precision = 6) {
   return coords;
 }
 
-/** Wie weit ist es noch? Projiziert die aktuelle Position auf die Route. */
+const SEARCH_BEHIND_METERS = 300;
+const SEARCH_AHEAD_METERS = 3000;
+const JUMP_ADVANTAGE_METERS = 150; // so viel näher muss eine andere Stelle sein, damit wir dorthin springen
+
+/**
+ * Wie weit ist es noch? Projiziert die aktuelle Position auf die Route.
+ * Gesucht wird zuerst nur rund um die zuletzt gefahrene Stelle – sonst würde bei Rundtouren
+ * (Start = Ziel) schon beim Losfahren das Ende der Route als „nächste Stelle“ erkannt.
+ */
 export class RouteProgress {
   constructor(route) {
     this.route = route;
@@ -107,13 +121,14 @@ export class RouteProgress {
       this.cumulative.push(this.cumulative[i - 1] + distance(this.coords[i - 1], this.coords[i]));
     }
     this.total = this.cumulative.at(-1) || 1;
+    this.along = 0; // bisher gefahrene Meter auf der Route
   }
 
   update(lng, lat) {
     const metersPerLng = 111320 * Math.cos((lat * Math.PI) / 180);
     const metersPerLat = 110540;
-    let bestDistance = Infinity;
-    let bestAlong = 0;
+    const nearby = { distance: Infinity, along: 0 };
+    const anywhere = { distance: Infinity, along: 0 };
 
     for (let i = 0; i < this.coords.length - 1; i++) {
       const [x1, y1] = this.coords[i];
@@ -130,17 +145,24 @@ export class RouteProgress {
       const px = ax + dx * t;
       const py = ay + dy * t;
       const d = Math.hypot(px, py);
-      if (d < bestDistance) {
-        bestDistance = d;
-        bestAlong = this.cumulative[i] + (this.cumulative[i + 1] - this.cumulative[i]) * t;
-      }
+      const along = this.cumulative[i] + (this.cumulative[i + 1] - this.cumulative[i]) * t;
+      if (d < anywhere.distance) Object.assign(anywhere, { distance: d, along });
+      const isNearby =
+        this.cumulative[i + 1] >= this.along - SEARCH_BEHIND_METERS &&
+        this.cumulative[i] <= this.along + SEARCH_AHEAD_METERS;
+      if (isNearby && d < nearby.distance) Object.assign(nearby, { distance: d, along });
     }
 
-    const remainingMeters = Math.max(0, this.total - bestAlong);
+    // Nur springen, wenn eine andere Stelle deutlich näher ist (z. B. Abkürzung gefahren).
+    // Ungenaues GPS am Start einer Rundtour springt so nicht ans Routen-Ende.
+    const best = anywhere.distance < nearby.distance - JUMP_ADVANTAGE_METERS ? anywhere : nearby;
+    this.along = best.along;
+
+    const remainingMeters = Math.max(0, this.total - best.along);
     return {
       remainingMeters,
       remainingSeconds: this.route.timeSeconds * (remainingMeters / this.total),
-      offRouteMeters: bestDistance,
+      offRouteMeters: best.distance,
     };
   }
 }

@@ -1,4 +1,4 @@
-// „Ziel“-Fenster: Ziel suchen, Zwischenziele, Favoriten, Routen-Optionen.
+// „Ziel“-Fenster: Ziel suchen, Zwischenziele, Favoriten, Rundtouren, Routen-Optionen.
 
 import { reversePlace, searchPlaces } from './search.js?v=1.2.1';
 
@@ -17,6 +17,12 @@ const ICONS = {
   star: '<svg class="i" viewBox="0 0 24 24"><path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z"/></svg>',
 };
 
+// Rundtour-Länge: Schnellwahl und Schieberegler, je nach Einheit.
+const TOUR_UNITS = {
+  km: { key: 'km', presets: [50, 100, 150, 200], min: 20, max: 400, step: 10 },
+  time: { key: 'hours', presets: [1, 2, 3, 4], min: 0.5, max: 6, step: 0.25 },
+};
+
 const OPTIONS = [
   { key: 'avoidHighways', label: 'Autobahnen vermeiden' },
   { key: 'avoidTolls', label: 'Mautstraßen vermeiden' },
@@ -29,8 +35,20 @@ const OPTIONS = [
  * @param {object} deps.routeOptions gespeicherte Routen-Optionen (wird verändert)
  * @param {(options: object) => void} deps.onOptionsChange
  * @param {(points: object[], options: object) => Promise<void>} deps.onCalculate
+ * @param {{mode:'dest'|'tour', unit:'km'|'time', km:number, hours:number, direction:number|null}} deps.plan
+ *   gespeicherte Planer-Einstellungen (wird verändert)
+ * @param {() => void} deps.onPlanChange
+ * @param {(spec: object, options: object, onProgress: Function) => Promise<void>} deps.onTourCalculate
  */
-export function createPlanner({ getOrigin, routeOptions, onOptionsChange, onCalculate }) {
+export function createPlanner({
+  getOrigin,
+  routeOptions,
+  onOptionsChange,
+  onCalculate,
+  plan,
+  onPlanChange,
+  onTourCalculate,
+}) {
   const stops = []; // in Fahrreihenfolge, das letzte ist das Ziel
   let favorites = loadFavorites();
   let insertAt = 0;
@@ -64,11 +82,40 @@ export function createPlanner({ getOrigin, routeOptions, onOptionsChange, onCalc
     });
   });
 
-  renderOptions();
+  document.querySelectorAll('[data-plan-mode]').forEach((tab) => {
+    tab.addEventListener('click', () => {
+      plan.mode = tab.dataset.planMode;
+      onPlanChange();
+      if (plan.mode === 'tour') showTour();
+      else if (stops.length) showPlan();
+      else showSearch(0);
+    });
+  });
+  document.querySelectorAll('[data-tour-unit]').forEach((button) => {
+    button.addEventListener('click', () => {
+      plan.unit = button.dataset.tourUnit;
+      onPlanChange();
+      renderTour();
+    });
+  });
+  document.querySelectorAll('[data-direction]').forEach((button) => {
+    button.addEventListener('click', () => {
+      plan.direction = button.dataset.direction === '' ? null : Number(button.dataset.direction);
+      onPlanChange();
+      renderTour();
+    });
+  });
+  $('tour-slider').addEventListener('input', (e) => {
+    plan[TOUR_UNITS[plan.unit].key] = Number(e.target.value);
+    renderTourValue();
+  });
+  $('tour-slider').addEventListener('change', onPlanChange);
+  $('calc-tour').addEventListener('click', calculateTour);
 
   function open() {
     $('planner').hidden = false;
-    if (stops.length) showPlan();
+    if (plan.mode === 'tour') showTour();
+    else if (stops.length) showPlan();
     else showSearch(0);
   }
 
@@ -84,22 +131,43 @@ export function createPlanner({ getOrigin, routeOptions, onOptionsChange, onCalc
 
   // ---------- Ansichten ----------
 
+  /** @param {'plan'|'search'|'tour'} name */
+  function setView(name) {
+    $('plan-view').hidden = name !== 'plan';
+    $('search-view').hidden = name !== 'search';
+    $('tour-view').hidden = name !== 'tour';
+    // Umschalter Ziel/Rundtour – nicht beim Suchen eines Zwischenziels.
+    $('plan-tabs').hidden = name === 'search' && stops.length > 0;
+    document.querySelectorAll('[data-plan-mode]').forEach((tab) => {
+      tab.setAttribute('aria-selected', String((tab.dataset.planMode === 'tour') === (name === 'tour')));
+    });
+  }
+
   function showPlan() {
     searchAbort?.abort();
     $('planner-title').textContent = 'Route planen';
     $('planner-back').hidden = true;
-    $('search-view').hidden = true;
-    $('plan-view').hidden = false;
+    setView('plan');
     hidePlanError();
     renderStops();
+    renderOptions('route-option-list');
+  }
+
+  function showTour() {
+    searchAbort?.abort();
+    $('planner-title').textContent = 'Rundtour planen';
+    $('planner-back').hidden = true;
+    setView('tour');
+    $('tour-error').hidden = true;
+    renderTour();
+    renderOptions('tour-option-list');
   }
 
   function showSearch(index) {
     insertAt = index;
     $('planner-title').textContent = stops.length ? 'Zwischenziel suchen' : 'Ziel suchen';
     $('planner-back').hidden = stops.length === 0;
-    $('plan-view').hidden = true;
-    $('search-view').hidden = false;
+    setView('search');
     $('search-input').value = '';
     $('search-results').replaceChildren();
     setSearchStatus('');
@@ -287,10 +355,80 @@ export function createPlanner({ getOrigin, routeOptions, onOptionsChange, onCalc
     setSearchStatus(`„${name}“ gespeichert.`);
   }
 
+  // ---------- Rundtour ----------
+
+  function renderTour() {
+    const unit = TOUR_UNITS[plan.unit];
+    document.querySelectorAll('[data-tour-unit]').forEach((button) => {
+      button.setAttribute('aria-checked', String(button.dataset.tourUnit === plan.unit));
+    });
+    const slider = $('tour-slider');
+    Object.assign(slider, { min: unit.min, max: unit.max, step: unit.step });
+    slider.value = plan[unit.key];
+
+    $('tour-presets').replaceChildren(
+      ...unit.presets.map((value) => {
+        const chip = document.createElement('button');
+        chip.className = 'chip-btn';
+        chip.dataset.value = value;
+        chip.textContent = plan.unit === 'time' ? `${value} h` : `${value} km`;
+        chip.addEventListener('click', () => {
+          plan[unit.key] = value;
+          onPlanChange();
+          slider.value = value;
+          renderTourValue();
+        });
+        return chip;
+      }),
+    );
+    renderTourValue();
+
+    document.querySelectorAll('[data-direction]').forEach((button) => {
+      const value = button.dataset.direction === '' ? null : Number(button.dataset.direction);
+      button.setAttribute('aria-pressed', String(value === plan.direction));
+    });
+  }
+
+  function renderTourValue() {
+    const unit = TOUR_UNITS[plan.unit];
+    const value = plan[unit.key];
+    $('tour-value').textContent = plan.unit === 'time' ? formatHours(value) : `${value} km`;
+    $('tour-presets')
+      .querySelectorAll('.chip-btn')
+      .forEach((chip) => chip.setAttribute('aria-pressed', String(Number(chip.dataset.value) === value)));
+  }
+
+  async function calculateTour() {
+    const origin = getOrigin();
+    const error = $('tour-error');
+    if (!origin) {
+      error.textContent = 'Noch kein GPS-Signal – bitte kurz warten.';
+      error.hidden = false;
+      return;
+    }
+    error.hidden = true;
+    const button = $('calc-tour');
+    button.disabled = true;
+    button.textContent = 'Suche Rundtouren …';
+    try {
+      const spec = { unit: plan.unit, km: plan.km, hours: plan.hours, direction: plan.direction };
+      await onTourCalculate(spec, { ...routeOptions }, (done, total) => {
+        button.textContent = `Suche Rundtouren … ${done}/${total}`;
+      });
+      close();
+    } catch (err) {
+      error.textContent = err.message;
+      error.hidden = false;
+    } finally {
+      button.disabled = false;
+      button.textContent = 'Rundtouren finden';
+    }
+  }
+
   // ---------- Optionen & Berechnen ----------
 
-  function renderOptions() {
-    const container = $('route-option-list');
+  function renderOptions(containerId) {
+    const container = $(containerId);
     container.replaceChildren(
       ...OPTIONS.map(({ key, label }) => {
         const button = document.createElement('button');
@@ -340,6 +478,12 @@ export function createPlanner({ getOrigin, routeOptions, onOptionsChange, onCalc
   }
 
   return { open, close, clearStops };
+}
+
+function formatHours(hours) {
+  const whole = Math.floor(hours);
+  const minutes = Math.round((hours - whole) * 60);
+  return minutes ? `${whole}:${String(minutes).padStart(2, '0')} h` : `${whole} h`;
 }
 
 // ---------- DOM-Bausteine ----------
