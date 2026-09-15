@@ -9,8 +9,17 @@ import { fetchRoutes, fetchSpeedLimits } from './routing.js?v=1.4';
 import { findRoundTrips } from './tours.js?v=1.4';
 import { Navigation, maneuverIcon, maneuverShort, maneuverTitle } from './navigation.js?v=1.4';
 import { setMuted, speak, unlockVoice, voiceSupported } from './voice.js?v=1.4';
+import { RideStats } from './ride-stats.js?v=1.5';
+import { describeWeather, fetchWeather, rainSummary } from './weather.js?v=1.5';
+import * as spotify from './spotify.js?v=1.5';
 
-const APP_VERSION = '1.4';
+const APP_VERSION = '1.5';
+const WEATHER_REFRESH_MS = 10 * 60 * 1000;
+const WEATHER_MOVE_METERS = 10000; // nach so viel Strecke neu abfragen
+const MUSIC_POLL_MS = 5000;
+const MUSIC_KEEP_PAUSED_MS = 15 * 60 * 1000; // pausierte Musik bleibt so lange sichtbar, damit man weiterspielen kann
+const MIN_RIDE_METERS = 200; // kürzere „Fahrten“ bekommen keine Auswertung
+const LAST_RIDE_KEY = 'motodash.lastRide';
 const ARRIVAL_METERS = 30;
 const REROUTE_COOLDOWN_MS = 8000; // höchstens so oft neu berechnen
 const REROUTE_SPEECH_GAP_MS = 60000; // „Route wird neu berechnet“ nicht ständig wiederholen
@@ -25,6 +34,8 @@ const ICONS = {
   night: '<svg class="i" viewBox="0 0 24 24"><path d="M20 14.5A8.5 8.5 0 1 1 9.5 4 6.5 6.5 0 0 0 20 14.5z"/></svg>',
   settings: '<svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>',
   route: '<svg class="i" viewBox="0 0 24 24"><path d="M5 21V4M5 4h11l-2 4 2 4H5"/></svg>',
+  play: '<svg class="i" viewBox="0 0 24 24"><path d="M8 5l12 7-12 7z"/></svg>',
+  pause: '<svg class="i" viewBox="0 0 24 24"><path d="M8 5v14M16 5v14" stroke-width="3.5"/></svg>',
   voiceOn: '<svg class="i" viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"/></svg>',
   voiceOff: '<svg class="i" viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M17 9l5 6M22 9l-5 6"/></svg>',
   day: '<svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>',
@@ -90,9 +101,13 @@ const routeState = {
 };
 const clockFormat = new Intl.DateTimeFormat('de-DE', { hour: '2-digit', minute: '2-digit' });
 
+const weatherState = { data: null, loading: false, failedAt: 0 };
+const music = { playback: null, lastPlayingAt: 0, timer: 0, polling: false };
+
 let map;
 let marker;
 let planner;
+let rideStats = null;
 const markerEl = document.createElement('div');
 markerEl.className = 'rider';
 markerEl.innerHTML = '<svg viewBox="0 0 48 48"><path d="M24 5 L40 42 L24 33 L8 42 Z"/></svg>';
@@ -210,6 +225,28 @@ function init() {
     if (state.mode) stop();
     if (!wasDemo) start('demo');
   });
+  $('spotify-connect').addEventListener('click', onSpotifyButton);
+  $('ride-end').addEventListener('click', () => {
+    $('settings').hidden = true;
+    stop();
+  });
+  $('ride-last').addEventListener('click', () => {
+    $('settings').hidden = true;
+    showRideSummary(loadLastRide());
+  });
+  $('summary-close').addEventListener('click', () => ($('ride-summary').hidden = true));
+  $('weather').addEventListener('click', openWeatherSheet);
+  $('weather-close').addEventListener('click', () => ($('weather-sheet').hidden = true));
+  for (const id of ['weather-sheet', 'ride-summary']) {
+    $(id).addEventListener('click', (e) => {
+      if (e.target === e.currentTarget) $(id).hidden = true;
+    });
+  }
+  $('music-toggle').addEventListener('click', toggleMusic);
+  $('music-next').addEventListener('click', () => musicCommand(spotify.nextTrack));
+  $('music-prev').addEventListener('click', () => musicCommand(spotify.previousTrack));
+  handleSpotifyReturn();
+
   $('settings-close').addEventListener('click', () => ($('settings').hidden = true));
   $('settings').addEventListener('click', (e) => {
     if (e.target === e.currentTarget) $('settings').hidden = true;
@@ -223,7 +260,9 @@ function init() {
   });
 
   document.addEventListener('visibilitychange', () => {
-    if (wake.wanted && !wake.lock && document.visibilityState === 'visible') requestWakeLock();
+    if (document.visibilityState !== 'visible') return;
+    if (wake.wanted && !wake.lock) requestWakeLock();
+    pollMusic();
   });
 }
 
@@ -247,6 +286,8 @@ function start(mode) {
   requestWakeLock();
   unlockVoice(); // passiert im Tipp auf „Losfahren“ – danach darf iOS jederzeit sprechen
   setTimeout(collapseAttribution, 8000);
+  rideStats = new RideStats();
+  startMusicPolling();
 
   if (mode === 'live') {
     setChip('gps', 'warn', 'GPS sucht …');
@@ -262,6 +303,11 @@ function start(mode) {
 }
 
 function stop() {
+  const summary = rideStats?.summary();
+  rideStats = null;
+  stopMusicPolling();
+  weatherState.data = null;
+  renderWeather();
   if (state.watchId != null) navigator.geolocation.clearWatch(state.watchId);
   state.demo?.stop();
   Object.assign(state, {
@@ -288,6 +334,11 @@ function stop() {
   map.easeTo({ bearing: 0, pitch: 0, padding: { top: 0, bottom: 0, left: 0, right: 0 }, duration: 400 });
   $('demo-badge').hidden = true;
   $('start').hidden = false;
+
+  if (summary && summary.meters >= MIN_RIDE_METERS) {
+    saveLastRide(summary);
+    showRideSummary(summary);
+  }
 }
 
 // ---------- Position ----------
@@ -323,6 +374,8 @@ function onPosition(fix) {
   if (heading != null && state.speedKmh >= 5) state.heading = heading;
   state.lastFix = fix;
   state.lastFixAt = Date.now();
+  rideStats?.add(fix, state.speedKmh);
+  maybeRefreshWeather();
 
   $('speed').textContent = Math.round(state.speedKmh);
   $('altitude').textContent = Number.isFinite(fix.altitude) ? `${Math.round(fix.altitude)} m` : '–';
@@ -891,6 +944,8 @@ function releaseWakeLock() {
 
 function tick() {
   $('clock').textContent = clockFormat.format(new Date());
+  renderWeather();
+  $('app').classList.toggle('has-dock', !$('route-info').hidden || !$('music-bar').hidden);
   if (state.mode === 'live' && state.lastFixAt && Date.now() - state.lastFixAt > GPS_STALE_MS) {
     setChip('gps', 'bad', 'GPS-Signal schwach');
     $('speed').textContent = '–';
@@ -921,7 +976,260 @@ function renderButtons() {
 
 function openSettings() {
   $('settings-demo').textContent = state.mode === 'demo' ? 'Demo beenden' : 'Demo-Fahrt starten';
+  renderSpotifySetting();
+  renderRideSetting();
   $('settings').hidden = false;
+}
+
+// ---------- Wetter ----------
+
+function maybeRefreshWeather() {
+  const position = currentPosition();
+  const now = Date.now();
+  if (!position || weatherState.loading || now - weatherState.failedAt < 60000) return;
+  const { data } = weatherState;
+  const outdated =
+    !data ||
+    now - data.fetchedAt > WEATHER_REFRESH_MS ||
+    distance([data.lng, data.lat], [position.lng, position.lat]) > WEATHER_MOVE_METERS;
+  if (!outdated) return;
+
+  weatherState.loading = true;
+  fetchWeather(position)
+    .then((weather) => {
+      weatherState.data = weather;
+      weatherState.failedAt = 0;
+      renderWeather();
+    })
+    .catch(() => (weatherState.failedAt = Date.now())) // alte Werte behalten, in einer Minute nochmal
+    .finally(() => (weatherState.loading = false));
+}
+
+function renderWeather() {
+  const { data } = weatherState;
+  $('weather').hidden = !data || !state.mode;
+  if (!data) return;
+  const { icon } = describeWeather(data.code, data.isDay);
+  const rain = rainSummary(data);
+  $('weather-now').textContent = `${icon} ${Math.round(data.temperature)}°`;
+  $('weather-rain').textContent = rain.text;
+  $('weather').classList.toggle('is-warn', rain.warn);
+}
+
+function openWeatherSheet() {
+  const { data } = weatherState;
+  if (!data) return;
+  const now = describeWeather(data.code, data.isDay);
+  const rain = rainSummary(data);
+  $('weather-summary').innerHTML =
+    '<span class="ws-icon"></span><div><div class="ws-temp"></div><div class="ws-text"></div><div class="ws-text ws-rain"></div></div>';
+  $('weather-summary').querySelector('.ws-icon').textContent = now.icon;
+  $('weather-summary').querySelector('.ws-temp').textContent = `${Math.round(data.temperature)}°`;
+  $('weather-summary').querySelector('.ws-text').textContent = now.text;
+  const rainLine = $('weather-summary').querySelector('.ws-rain');
+  rainLine.textContent = rain.warn ? rain.text : 'In den nächsten 2 Stunden trocken';
+  rainLine.classList.toggle('is-warn', rain.warn);
+
+  // Balken: Regenmenge je 15 Minuten, voll ab 1,5 mm.
+  $('weather-bars').replaceChildren(
+    ...data.slots.map((slot) => {
+      const bar = document.createElement('div');
+      bar.className = `rain-bar${slot.mm >= 0.2 ? ' is-rain' : ''}`;
+      bar.style.height = `${Math.min(100, (slot.mm / 1.5) * 100)}%`;
+      bar.title = `${slot.mm.toLocaleString('de-DE')} mm`;
+      return bar;
+    }),
+  );
+  const first = data.slots[0];
+  const last = data.slots.at(-1);
+  $('weather-bar-labels').innerHTML = '<span></span><span></span>';
+  const [from, to] = $('weather-bar-labels').children;
+  from.textContent = first ? clockFormat.format(new Date(first.start)) : '';
+  to.textContent = last ? clockFormat.format(new Date(last.start + 15 * 60 * 1000)) : '';
+
+  $('weather-hours').replaceChildren(
+    ...data.hours.slice(1).map((hour) => {
+      const row = document.createElement('li');
+      const info = describeWeather(hour.code, hour.isDay);
+      row.innerHTML = '<span></span><span class="wh-icon"></span><span class="wh-temp"></span><span class="wh-rain"></span>';
+      const [time, iconEl, temp, chance] = row.children;
+      time.textContent = clockFormat.format(new Date(hour.time));
+      iconEl.textContent = info.icon;
+      temp.textContent = `${Math.round(hour.temperature)}°`;
+      chance.textContent = `Regen ${hour.rainChance ?? 0} %`;
+      chance.classList.toggle('is-warn', (hour.rainChance ?? 0) >= 50);
+      return row;
+    }),
+  );
+  $('weather-sheet').hidden = false;
+}
+
+// ---------- Musik (Spotify) ----------
+
+function startMusicPolling() {
+  stopMusicPolling();
+  if (!spotify.isConnected()) return;
+  pollMusic();
+  music.timer = setInterval(pollMusic, MUSIC_POLL_MS);
+}
+
+function stopMusicPolling() {
+  clearInterval(music.timer);
+  music.timer = 0;
+  music.playback = null;
+  renderMusic();
+}
+
+async function pollMusic() {
+  if (!state.mode || !spotify.isConnected() || music.polling || document.visibilityState !== 'visible') return;
+  music.polling = true;
+  try {
+    music.playback = await spotify.getPlayback();
+    if (music.playback?.isPlaying) music.lastPlayingAt = Date.now();
+  } catch (err) {
+    // Bei Netzproblemen den letzten Stand behalten, sonst ausblenden.
+    if (err.code !== 'network' && err.code !== 'rate-limit') music.playback = null;
+  } finally {
+    music.polling = false;
+    renderMusic();
+  }
+}
+
+function renderMusic() {
+  const playback = music.playback;
+  const visible = Boolean(
+    state.mode && playback && (playback.isPlaying || Date.now() - music.lastPlayingAt < MUSIC_KEEP_PAUSED_MS),
+  );
+  $('music-bar').hidden = !visible;
+  if (!visible) return;
+
+  $('music-title').textContent = playback.title;
+  $('music-artist').textContent = playback.artist;
+  const cover = $('music-cover');
+  cover.hidden = !playback.cover;
+  if (playback.cover && cover.getAttribute('src') !== playback.cover) cover.src = playback.cover;
+  $('music-toggle').innerHTML = playback.isPlaying ? ICONS.pause : ICONS.play;
+  $('music-toggle').setAttribute('aria-label', playback.isPlaying ? 'Pause' : 'Wiedergabe');
+}
+
+async function toggleMusic() {
+  const playback = music.playback;
+  if (!playback) return;
+  const wasPlaying = playback.isPlaying;
+  playback.isPlaying = !wasPlaying; // sofort anzeigen, Spotify braucht etwa eine Sekunde
+  music.lastPlayingAt = Date.now();
+  renderMusic();
+  await musicCommand(wasPlaying ? spotify.pause : spotify.play);
+}
+
+async function musicCommand(command) {
+  try {
+    await command();
+  } catch (err) {
+    showToast(err.message, { error: true });
+  }
+  setTimeout(pollMusic, 800);
+}
+
+async function handleSpotifyReturn() {
+  const result = await spotify.handleRedirect();
+  if (!result) return;
+  openSettings();
+  renderSpotifySetting(result);
+}
+
+function renderSpotifySetting(message) {
+  const connected = spotify.isConnected();
+  $('spotify-hint').textContent = connected
+    ? 'Verbunden. Während der Fahrt erscheint unten auf der Karte eine Musik-Leiste, sobald Spotify spielt.'
+    : 'Steuert deine Spotify-Wiedergabe (Spotify Premium nötig). Einmalig eine eigene Spotify-App anlegen und die Client-ID hier eintragen.';
+  $('spotify-client').hidden = connected;
+  if (!$('spotify-client-id').value) $('spotify-client-id').value = spotify.getClientId();
+  $('spotify-redirect').textContent = spotify.redirectUri();
+  $('spotify-connect').textContent = connected ? 'Verbindung trennen' : 'Mit Spotify verbinden';
+
+  const box = $('spotify-message');
+  box.hidden = !message;
+  if (message) {
+    box.textContent = message.message;
+    box.className = message.ok ? 'note success' : 'error';
+  }
+}
+
+async function onSpotifyButton() {
+  if (spotify.isConnected()) {
+    spotify.disconnect();
+    stopMusicPolling();
+    renderSpotifySetting({ ok: true, message: 'Verbindung getrennt.' });
+    return;
+  }
+  if (state.mode) {
+    // Für die Anmeldung verlässt die App kurz die Seite – das würde die laufende Fahrt beenden.
+    renderSpotifySetting({ ok: false, message: 'Bitte vor dem Losfahren verbinden – die App wird dafür kurz verlassen.' });
+    return;
+  }
+  const clientId = $('spotify-client-id').value.trim();
+  if (!/^[0-9a-f]{32}$/i.test(clientId)) {
+    renderSpotifySetting({ ok: false, message: 'Die Client-ID hat 32 Zeichen (0–9 und a–f). Bitte aus dem Spotify-Dashboard kopieren.' });
+    return;
+  }
+  spotify.setClientId(clientId);
+  try {
+    await spotify.connect();
+  } catch (err) {
+    renderSpotifySetting({ ok: false, message: err.message });
+  }
+}
+
+// ---------- Fahrt-Auswertung ----------
+
+function renderRideSetting() {
+  const riding = Boolean(state.mode);
+  const lastRide = loadLastRide();
+  $('ride-end').hidden = !riding || state.mode === 'demo'; // Demo hat ihren eigenen Knopf
+  $('ride-last').hidden = riding || !lastRide;
+  if (riding && rideStats) {
+    const current = rideStats.summary();
+    $('ride-hint').textContent = `Bisher: ${formatDistance(current.meters)} · ${formatDuration(current.totalSeconds)} unterwegs`;
+  } else {
+    $('ride-hint').textContent = 'Nach dem Beenden siehst du Strecke, Zeiten, Höhenmeter und maximale Schräglage.';
+  }
+}
+
+function showRideSummary(summary) {
+  if (!summary) return;
+  const dateFormat = new Intl.DateTimeFormat('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit' });
+  $('sum-date').textContent = `${dateFormat.format(new Date(summary.startedAt))} · ${clockFormat.format(new Date(summary.startedAt))}–${clockFormat.format(new Date(summary.endedAt))}`;
+  $('sum-distance').textContent = formatDistance(summary.meters);
+  $('sum-moving').textContent = formatDuration(summary.movingSeconds);
+  $('sum-total').textContent = formatDuration(summary.totalSeconds);
+  $('sum-avg').textContent = summary.avgKmh ? `${Math.round(summary.avgKmh)} km/h` : '–';
+  $('sum-max').textContent = `${Math.round(summary.maxKmh)} km/h`;
+  $('sum-climb').textContent = `${summary.climbMeters.toLocaleString('de-DE')} m`;
+  $('sum-lean-left').textContent = `${summary.maxLeanLeft}°`;
+  $('sum-lean-right').textContent = `${summary.maxLeanRight}°`;
+  $('ride-summary').hidden = false;
+  // Zeiger erst nach dem Einblenden drehen, damit man die Bewegung sieht.
+  requestAnimationFrame(() => {
+    $('lean-needle-left').style.transform = `rotate(${-summary.maxLeanLeft}deg)`;
+    $('lean-needle-right').style.transform = `rotate(${summary.maxLeanRight}deg)`;
+  });
+}
+
+function loadLastRide() {
+  try {
+    return JSON.parse(localStorage.getItem(LAST_RIDE_KEY));
+  } catch {
+    return null;
+  }
+}
+
+function saveLastRide(summary) {
+  try {
+    localStorage.setItem(LAST_RIDE_KEY, JSON.stringify(summary));
+  } catch {
+    // ohne Speicher gibt es nur die Anzeige direkt nach der Fahrt
+  }
 }
 
 /** Cockpit-Seite im Querformat (links/rechts). */
