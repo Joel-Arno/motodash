@@ -331,6 +331,50 @@ svg.i {
 .chip[data-level="warn"] .dot { background: var(--warn); opacity: 1; }
 .chip[data-level="bad"] .dot { background: var(--bad); opacity: 1; }
 
+/* GPS- und Display-Hinweis nur zeigen, wenn etwas nicht stimmt. */
+.chip[data-level="ok"],
+.chip[data-level="off"] {
+  display: none;
+}
+
+/* ---------- Wetter im Cockpit ---------- */
+
+.weather {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+  padding: 4px 0;
+  text-align: right;
+}
+
+.weather-now {
+  font-size: 17px;
+  font-weight: 700;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.weather-rain {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.weather.is-warn .weather-rain {
+  color: var(--warn);
+}
+
+@media (orientation: landscape) {
+  .weather {
+    flex-direction: row;
+    align-items: baseline;
+    gap: 8px;
+    text-align: left;
+  }
+}
+
 @media (orientation: landscape) {
   .meta {
     align-items: flex-start;
@@ -980,10 +1024,7 @@ svg.i {
 }
 
 .route-info {
-  position: absolute;
-  z-index: 2;
-  left: calc(12px + var(--edge-left));
-  bottom: calc(12px + var(--edge-bottom));
+  flex: none;
   display: flex;
   align-items: center;
   gap: 14px;
@@ -1052,13 +1093,7 @@ svg.i {
   display: inline;
 }
 
-/* Im Querformat mit Cockpit links liegen dort die Zoom-Knöpfe – Ankunft dann rechts unten. */
-@media (orientation: landscape) {
-  :root[data-cockpit="left"] .route-info {
-    left: auto;
-    right: calc(48px + var(--edge-right));
-  }
-}
+
 
 .toast.is-error {
   max-width: 85%;
@@ -1763,4 +1798,346 @@ svg.i {
     bottom: calc(12px + var(--edge-bottom));
     transform: none;
   }
+}
+
+/* ---------- Leiste unten auf der Karte: Ankunft + Musik ---------- */
+
+.map-dock {
+  position: absolute;
+  z-index: 2;
+  left: calc(12px + var(--edge-left));
+  right: calc(12px + var(--edge-right));
+  bottom: calc(12px + var(--edge-bottom));
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.map-dock > * {
+  pointer-events: auto;
+}
+
+/* Quellenangabe über die Leiste schieben, damit sie nicht verdeckt wird. */
+#app.has-dock .maplibregl-ctrl-bottom-right {
+  bottom: 84px;
+}
+
+@media (orientation: landscape) {
+  /* Während der Navigation liegen die Knöpfe unten auf der Cockpit-Seite. */
+  #app.is-navigating .map-dock {
+    right: calc(84px + var(--edge-right));
+  }
+
+  :root[data-cockpit="left"] #app.is-navigating .map-dock {
+    left: calc(84px + var(--edge-left));
+    right: calc(12px + var(--edge-right));
+  }
+}
+
+.music-bar {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px;
+  border-radius: 18px;
+  background: var(--fab-bg);
+  box-shadow: var(--shadow);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  container-type: inline-size;
+}
+
+.music-cover {
+  flex: none;
+  width: 52px;
+  height: 52px;
+  border-radius: 10px;
+  object-fit: cover;
+}
+
+.music-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.music-title,
+.music-artist {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.music-title {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.music-artist {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.music-controls {
+  flex: none;
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.music-btn {
+  width: 52px;
+  height: 52px;
+  display: grid;
+  place-items: center;
+  border-radius: 14px;
+  background: var(--panel-2);
+}
+
+.music-btn svg {
+  width: 24px;
+  height: 24px;
+}
+
+.music-main {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.music-main svg {
+  fill: currentColor;
+}
+
+/* Wenig Platz (neben der Ankunftszeit im Hochformat): nur die Knöpfe. */
+@container (max-width: 300px) {
+  .music-cover,
+  .music-text {
+    display: none !important;
+  }
+
+  .music-controls {
+    margin: 0 auto;
+  }
+}
+
+@container (max-width: 190px) {
+  .music-prev {
+    display: none;
+  }
+}
+
+/* ---------- Wetter-Vorschau ---------- */
+
+.weather-summary {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 4px;
+}
+
+.weather-summary .ws-icon {
+  font-size: 48px;
+  line-height: 1;
+}
+
+.weather-summary .ws-temp {
+  font-size: 34px;
+  font-weight: 800;
+}
+
+.weather-summary .ws-text {
+  font-size: 15px;
+  color: var(--muted);
+}
+
+.weather-summary .ws-rain.is-warn {
+  color: var(--warn);
+  font-weight: 700;
+}
+
+.rain-bars {
+  height: 64px;
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  align-items: end;
+  gap: 4px;
+  padding: 0 2px;
+  border-bottom: 1px solid var(--line);
+}
+
+.rain-bar {
+  min-height: 3px;
+  border-radius: 4px 4px 0 0;
+  background: var(--line);
+}
+
+.rain-bar.is-rain {
+  background: #4f9dff;
+}
+
+.rain-labels {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.weather-hours {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.weather-hours li {
+  display: grid;
+  grid-template-columns: 64px 36px 1fr auto;
+  align-items: center;
+  min-height: 44px;
+  border-bottom: 1px solid var(--line);
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+}
+
+.weather-hours li:last-child {
+  border-bottom: 0;
+}
+
+.weather-hours .wh-icon {
+  font-size: 22px;
+}
+
+.weather-hours .wh-temp {
+  font-weight: 700;
+}
+
+.weather-hours .wh-rain {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.weather-hours .wh-rain.is-warn {
+  color: #4f9dff;
+  font-weight: 700;
+}
+
+/* ---------- Fahrt-Auswertung ---------- */
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.stat-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: var(--panel-2);
+}
+
+.stat-tile span {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.stat-tile b {
+  font-size: 20px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.lean-card {
+  display: grid;
+  grid-template-columns: 1fr 2fr 1fr;
+  align-items: end;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 16px;
+  background: var(--panel-2);
+}
+
+.lean-side {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-bottom: 6px;
+}
+
+.lean-side span {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.lean-side b {
+  font-size: 30px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.lean-gauge {
+  width: 100%;
+  max-width: 220px;
+  justify-self: center;
+}
+
+.lean-arc,
+.lean-tick {
+  fill: none;
+  stroke: var(--line);
+  stroke-width: 6;
+  stroke-linecap: round;
+}
+
+.lean-tick {
+  stroke-width: 3;
+}
+
+.lean-needle {
+  stroke: var(--accent);
+  stroke-width: 6;
+  stroke-linecap: round;
+  transform-origin: 100px 104px;
+  transition: transform 0.6s ease-out;
+}
+
+.lean-hub {
+  fill: var(--text);
+}
+
+.selectable {
+  -webkit-user-select: all;
+  user-select: all;
+  word-break: break-all;
+}
+
+@media (max-width: 380px) {
+  .stats-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.setting-btn + .setting-btn {
+  margin-top: 8px;
+}
+
+.note.success {
+  margin: 0 0 10px;
+  color: var(--ok);
+  font-weight: 600;
+}
+
+.setting .text-input {
+  margin-top: 4px;
+}
+
+.setting .error {
+  margin-bottom: 10px;
 }
