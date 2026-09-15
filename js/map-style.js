@@ -38,6 +38,7 @@ const PALETTES = {
     routeCasing: '#0a2a55',
     routeAlt: '#5f6a7a',
     routeAltCasing: '#1b2129',
+    routeDone: '#56606d',
   },
   day: {
     background: '#f1f0ea',
@@ -70,6 +71,7 @@ const PALETTES = {
     routeCasing: '#0b4aa8',
     routeAlt: '#9aa5b3',
     routeAltCasing: '#6f7a88',
+    routeDone: '#a3abb5',
   },
 };
 
@@ -126,8 +128,17 @@ function roadLayers(p) {
   return [...casings, ...fills];
 }
 
+/**
+ * Gefahrener Teil der Route in Grau: Verlauf entlang der Linie, bis `fraction` grau, danach durchsichtig.
+ * Wird während der Fahrt über map.setPaintProperty aktualisiert.
+ */
+export function routeDoneGradient(theme, fraction) {
+  const p = PALETTES[theme] ?? PALETTES.night;
+  return ['step', ['line-progress'], p.routeDone, Math.min(1, Math.max(0, fraction)), 'rgba(0, 0, 0, 0)'];
+}
+
 // Gewählte Route kräftig, Alternativen grau darunter. Liegt über den Straßen, unter den Beschriftungen.
-function routeLayers(p) {
+function routeLayers(p, theme, doneFraction) {
   const selected = ['==', ['get', 'selected'], true];
   const alternative = ['!=', ['get', 'selected'], true];
   const line = (id, filter, color, width) => ({
@@ -143,6 +154,14 @@ function routeLayers(p) {
     line('route-alt', alternative, p.routeAlt, [[5, 2.5], [14, 7], [18, 18]]),
     line('route-casing', selected, p.routeCasing, [[5, 5], [14, 13], [18, 30]]),
     line('route-line', selected, p.route, [[5, 3.5], [14, 9], [18, 22]]),
+    {
+      id: 'route-done',
+      type: 'line',
+      source: 'route',
+      filter: selected,
+      layout: { 'line-cap': 'round', 'line-join': 'round' },
+      paint: { 'line-gradient': routeDoneGradient(theme, doneFraction), 'line-width': byZoom([[5, 3.5], [14, 9], [18, 22]]) },
+    },
     // Unsichtbare, breite Linie, damit man Alternativen mit dem Finger leicht antippen kann.
     {
       id: 'route-hit',
@@ -178,8 +197,11 @@ function placeLayer(id, classes, minzoom, sizes, p, { bold = false, muted = fals
 
 const EMPTY_COLLECTION = { type: 'FeatureCollection', features: [] };
 
-/** @param route aktuelle Routen als GeoJSON – bleibt so auch beim Wechsel Tag/Nacht erhalten */
-export function buildStyle(theme, { route = EMPTY_COLLECTION } = {}) {
+/**
+ * @param route aktuelle Routen als GeoJSON – bleibt so auch beim Wechsel Tag/Nacht erhalten
+ * @param doneFraction Anteil der schon gefahrenen Route (0–1)
+ */
+export function buildStyle(theme, { route = EMPTY_COLLECTION, doneFraction = 0 } = {}) {
   const p = PALETTES[theme] ?? PALETTES.night;
 
   return {
@@ -188,7 +210,7 @@ export function buildStyle(theme, { route = EMPTY_COLLECTION } = {}) {
     glyphs: 'https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf',
     sources: {
       [SOURCE]: { type: 'vector', url: 'https://tiles.openfreemap.org/planet' },
-      route: { type: 'geojson', data: route },
+      route: { type: 'geojson', data: route, lineMetrics: true },
     },
     layers: [
       { id: 'background', type: 'background', paint: { 'background-color': p.background } },
@@ -261,7 +283,7 @@ export function buildStyle(theme, { route = EMPTY_COLLECTION } = {}) {
       },
 
       ...roadLayers(p),
-      ...routeLayers(p),
+      ...routeLayers(p, theme, doneFraction),
 
       {
         id: 'water-name',

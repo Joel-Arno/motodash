@@ -1,15 +1,19 @@
 import * as maplibregl from 'https://cdn.jsdelivr.net/npm/maplibre-gl@6.9.1/dist/maplibre-gl.mjs';
 // Die ?v=… Anhänge sorgen dafür, dass das iPhone nach einem Update die neuen Dateien lädt.
 // Bei jeder Änderung APP_VERSION erhöhen und bei jeder geänderten Datei deren ?v= überall, wo sie geladen wird.
-import { buildStyle } from './map-style.js?v=1.2.1';
+import { buildStyle, routeDoneGradient } from './map-style.js?v=1.4';
 import { DemoRide } from './demo.js?v=1.2.1';
 import { angleDiff, bearing, distance } from './geo.js?v=1.2.1';
 import { createPlanner } from './planner.js?v=1.3';
-import { fetchRoutes, RouteProgress } from './routing.js?v=1.3';
-import { findRoundTrips } from './tours.js?v=1.3';
+import { fetchRoutes, fetchSpeedLimits } from './routing.js?v=1.4';
+import { findRoundTrips } from './tours.js?v=1.4';
+import { Navigation, maneuverIcon, maneuverShort, maneuverTitle } from './navigation.js?v=1.4';
+import { setMuted, speak, unlockVoice, voiceSupported } from './voice.js?v=1.4';
 
-const APP_VERSION = '1.3';
+const APP_VERSION = '1.4';
 const ARRIVAL_METERS = 30;
+const REROUTE_COOLDOWN_MS = 8000; // höchstens so oft neu berechnen
+const REROUTE_SPEECH_GAP_MS = 60000; // „Route wird neu berechnet“ nicht ständig wiederholen
 
 const $ = (id) => document.getElementById(id);
 const clamp = (v, min, max) => Math.min(max, Math.max(min, v));
@@ -21,7 +25,25 @@ const ICONS = {
   night: '<svg class="i" viewBox="0 0 24 24"><path d="M20 14.5A8.5 8.5 0 1 1 9.5 4 6.5 6.5 0 0 0 20 14.5z"/></svg>',
   settings: '<svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>',
   route: '<svg class="i" viewBox="0 0 24 24"><path d="M5 21V4M5 4h11l-2 4 2 4H5"/></svg>',
+  voiceOn: '<svg class="i" viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"/></svg>',
+  voiceOff: '<svg class="i" viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M17 9l5 6M22 9l-5 6"/></svg>',
   day: '<svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>',
+};
+
+// Abbiegepfeile fürs Navigations-Banner (weiße Linien auf blauem Grund).
+const NAV_ICONS = {
+  straight: '<path d="M24 42V8M13 19L24 8l11 11"/>',
+  right: '<path d="M14 42V26a8 8 0 0 1 8-8h16M30 10l8 8-8 8"/>',
+  slightRight: '<path d="M17 42V27L35 9M23 9h12v12"/>',
+  sharpRight: '<path d="M15 8v26M15 34L35 14M25 14h10v10"/>',
+  left: '<path d="M34 42V26a8 8 0 0 0-8-8H10M18 10l-8 8 8 8"/>',
+  slightLeft: '<path d="M31 42V27L13 9M25 9H13v12"/>',
+  sharpLeft: '<path d="M33 8v26M33 34L13 14M23 14H13v10"/>',
+  uturn: '<path d="M32 42V18a8 8 0 0 0-16 0v16M8 26l8 8 8-8"/>',
+  roundabout: '<path d="M24 43V31M24 31A9 9 0 1 0 15 22H6M11 17l-5 5 5 5"/>',
+  flag: '<path d="M14 43V7M14 8h20l-5 7 5 7H14"/>',
+  ferry: '<path d="M7 31h34l-5 9H12zM24 31V9M24 10l11 14H24"/>',
+  reroute: '<path d="M38 24a14 14 0 1 1-4.1-9.9M38 8v8h-8"/>',
 };
 
 const SETTINGS_KEY = 'motodash.settings';
@@ -51,7 +73,21 @@ const anim = { from: null, to: null, start: 0, duration: 1000, lastTargetAt: 0, 
 const wake = { lock: null, wanted: false };
 // phase: null (keine Route) | 'choose' (Routen zur Auswahl) | 'active' (Route wird gefahren)
 // tour: bei Rundtouren die Anfrage (für „Neue Vorschläge“), sonst null
-const routeState = { phase: null, routes: [], selected: 0, stops: [], progress: null, markers: [], tour: null };
+// nav: laufende Navigation (nur in 'active')
+const routeState = {
+  phase: null,
+  routes: [],
+  selected: 0,
+  stops: [],
+  nav: null,
+  markers: [],
+  tour: null,
+  doneFraction: 0,
+  rerouting: false,
+  rerouteFailed: false,
+  lastRerouteAt: 0,
+  lastRerouteSpeechAt: 0,
+};
 const clockFormat = new Intl.DateTimeFormat('de-DE', { hour: '2-digit', minute: '2-digit' });
 
 let map;
@@ -119,6 +155,14 @@ function init() {
   $('btn-zoom-in').addEventListener('click', () => zoomBy(1));
   $('btn-zoom-out').addEventListener('click', () => zoomBy(-1));
   $('btn-recenter').addEventListener('click', recenter);
+  setMuted(settings.voiceMuted);
+  $('btn-voice').addEventListener('click', () => {
+    settings.voiceMuted = !settings.voiceMuted;
+    saveSettings();
+    setMuted(settings.voiceMuted);
+    renderVoiceButton();
+    if (!settings.voiceMuted) speak('Sprachansagen an.', { interrupt: true });
+  });
   $('display').addEventListener('click', () => state.mode && requestWakeLock());
 
   $('btn-view').addEventListener('click', () => {
@@ -133,7 +177,7 @@ function init() {
     saveSettings();
     applyTheme();
     renderButtons();
-    map.setStyle(buildStyle(settings.theme, { route: routeGeoJSON() }));
+    map.setStyle(buildStyle(settings.theme, { route: routeGeoJSON(), doneFraction: routeState.doneFraction }));
   });
 
   planner = createPlanner({
@@ -201,6 +245,7 @@ function start(mode) {
   $('demo-badge').hidden = mode !== 'demo';
   setFollow(true);
   requestWakeLock();
+  unlockVoice(); // passiert im Tipp auf „Losfahren“ – danach darf iOS jederzeit sprechen
   setTimeout(collapseAttribution, 8000);
 
   if (mode === 'live') {
@@ -284,7 +329,7 @@ function onPosition(fix) {
   setChip('gps', ...gpsStatus(fix));
 
   animateTo({ lng: fix.lng, lat: fix.lat, heading: state.heading, zoom: autoZoom(state.speedKmh) });
-  updateRouteProgress();
+  updateNavigation();
 }
 
 function gpsStatus(fix) {
@@ -478,7 +523,7 @@ async function rerollTours() {
 }
 
 function presentChoices({ routes, stops, tour }) {
-  Object.assign(routeState, { phase: 'choose', routes, selected: 0, stops, progress: null, tour });
+  Object.assign(routeState, { phase: 'choose', routes, selected: 0, stops, nav: null, tour });
 
   $('route-info').hidden = true;
   $('route-chooser').hidden = false;
@@ -504,39 +549,175 @@ function selectRoute(index) {
 function startRoute() {
   const route = routeState.routes[routeState.selected];
   routeState.phase = 'active';
-  routeState.progress = new RouteProgress(route);
+  activateRoute(route);
   $('route-chooser').hidden = true;
   $('app').classList.remove('is-choosing');
+  $('app').classList.add('is-navigating');
   $('route-info').hidden = false;
+  $('btn-voice').hidden = !voiceSupported;
+  renderVoiceButton();
   renderRoute();
   if (state.mode === 'demo') state.demo.followRoute(route.coords);
-  updateRouteProgress();
+  // Im Tipp auf „Starten“ sprechen – so erlaubt iOS auch die späteren Ansagen.
+  speak(routeState.nav.startAnnouncement(Boolean(routeState.tour)), { interrupt: true });
+  updateNavigation();
   recenter();
+}
+
+/** Navigation für eine (neue oder neu berechnete) Route aufsetzen. */
+function activateRoute(route) {
+  routeState.nav = new Navigation(route);
+  routeState.rerouteFailed = false;
+  setDoneFraction(0, { force: true });
+  fetchSpeedLimits(route)
+    .then((limits) => (route.speedLimits = limits))
+    .catch(() => {}); // ohne Tempolimits weiter navigieren
 }
 
 /** @param keepStops true = Ziele bleiben im Planer zum Bearbeiten erhalten */
 function clearRoute({ keepStops = false } = {}) {
-  Object.assign(routeState, { phase: null, routes: [], selected: 0, stops: [], progress: null, tour: null });
+  Object.assign(routeState, { phase: null, routes: [], selected: 0, stops: [], nav: null, tour: null, rerouting: false });
   if (!keepStops) planner?.clearStops();
   $('route-chooser').hidden = true;
-  $('app').classList.remove('is-choosing');
+  $('app').classList.remove('is-choosing', 'is-navigating');
   $('route-info').hidden = true;
+  $('nav-banner').hidden = true;
+  $('btn-voice').hidden = true;
+  renderSpeedLimit(0);
   if (!map) return;
+  setDoneFraction(0, { force: true });
   renderRoute();
   renderStopMarkers();
   if (state.mode && !state.follow) recenter();
 }
 
-function updateRouteProgress() {
-  if (routeState.phase !== 'active' || !state.lastFix) return;
-  const { remainingMeters, remainingSeconds } = routeState.progress.update(state.lastFix.lng, state.lastFix.lat);
-  $('route-eta').textContent = clockFormat.format(new Date(Date.now() + remainingSeconds * 1000));
-  $('route-remaining').textContent = `${formatDistance(remainingMeters)} · ${formatDuration(remainingSeconds)}`;
-  if (remainingMeters < ARRIVAL_METERS) {
+function updateNavigation() {
+  const { nav } = routeState;
+  if (routeState.phase !== 'active' || !nav || !state.lastFix) return;
+  const fix = state.lastFix;
+  const status = nav.update({
+    lng: fix.lng,
+    lat: fix.lat,
+    accuracy: fix.accuracy,
+    speedMps: state.speedKmh / 3.6,
+    timestamp: fix.timestamp,
+  });
+
+  $('route-eta').textContent = clockFormat.format(new Date(Date.now() + status.remainingSeconds * 1000));
+  $('route-remaining').textContent = `${formatDistance(status.remainingMeters)} · ${formatDuration(status.remainingSeconds)}`;
+  setDoneFraction(status.along / nav.progress.total);
+  renderSpeedLimit(status.speedLimit);
+
+  if (status.remainingMeters < ARRIVAL_METERS) {
     const wasTour = Boolean(routeState.tour);
     clearRoute();
+    speak(wasTour ? 'Sie haben die Rundtour geschafft.' : 'Sie haben Ihr Ziel erreicht.', { interrupt: true });
     showToast(wasTour ? 'Rundtour geschafft' : 'Ziel erreicht');
+    return;
   }
+
+  if (status.offRoute || routeState.rerouting) {
+    renderBannerStatus(routeState.rerouteFailed ? 'Keine Verbindung' : 'Neue Route …', 'Route wird neu berechnet');
+    reroute();
+    return;
+  }
+
+  renderBanner(status);
+  if (status.speech) speak(status.speech.text, { interrupt: status.speech.interrupt });
+}
+
+/** Von der Route abgekommen: neue Route zu den noch offenen Zwischenzielen bzw. zurück auf die Rundtour. */
+async function reroute() {
+  const { nav } = routeState;
+  const origin = currentPosition();
+  const now = Date.now();
+  if (!nav || !origin || routeState.rerouting || now - routeState.lastRerouteAt < REROUTE_COOLDOWN_MS) return;
+
+  routeState.rerouting = true;
+  routeState.lastRerouteAt = now;
+  if (now - routeState.lastRerouteSpeechAt > REROUTE_SPEECH_GAP_MS) {
+    routeState.lastRerouteSpeechAt = now;
+    speak('Route wird neu berechnet.', { interrupt: true });
+  }
+
+  try {
+    const targets = nav.remainingWaypoints().map(({ lng, lat, via }) => ({ lng, lat, via }));
+    const [route] = await fetchRoutes([origin, ...targets], nav.route.options);
+    if (routeState.phase !== 'active' || routeState.nav !== nav) return; // inzwischen beendet
+    routeState.routes = [route];
+    routeState.selected = 0;
+    activateRoute(route);
+    renderRoute();
+    if (state.mode === 'demo') state.demo.followRoute(route.coords);
+  } catch {
+    routeState.rerouteFailed = true; // nächster Versuch nach der Wartezeit
+  } finally {
+    routeState.rerouting = false;
+  }
+}
+
+function renderBanner(status) {
+  const { next, then } = status;
+  $('nav-banner').hidden = !next;
+  if (!next) return;
+  $('nav-banner').classList.remove('is-status');
+  setNavIcon($('nb-icon'), maneuverIcon(next));
+  $('nb-distance').textContent = formatBannerDistance(status.distanceToNext);
+  $('nb-title').textContent = maneuverTitle(next, Boolean(routeState.tour));
+  $('nb-then').hidden = !then;
+  if (then) {
+    setNavIcon($('nb-then-icon'), maneuverIcon(then));
+    $('nb-then-text').textContent = maneuverShort(then);
+  }
+}
+
+function renderBannerStatus(headline, detail) {
+  $('nav-banner').hidden = false;
+  $('nav-banner').classList.add('is-status');
+  setNavIcon($('nb-icon'), 'reroute');
+  $('nb-distance').textContent = headline;
+  $('nb-title').textContent = detail;
+  $('nb-then').hidden = true;
+}
+
+function setNavIcon(el, name) {
+  if (el.dataset.icon === name) return;
+  el.dataset.icon = name;
+  el.innerHTML = `<svg viewBox="0 0 48 48" aria-hidden="true">${NAV_ICONS[name] ?? NAV_ICONS.straight}</svg>`;
+}
+
+function formatBannerDistance(meters) {
+  if (meters < 15) return 'Jetzt';
+  if (meters < 1000) {
+    const step = meters > 300 ? 50 : 10;
+    return `${Math.round(meters / step) * step} m`;
+  }
+  return formatDistance(meters);
+}
+
+/** Tempolimit-Schild und rotes Tempo, wenn deutlich zu schnell. */
+function renderSpeedLimit(limit) {
+  const sign = $('speed-limit');
+  sign.hidden = !limit;
+  if (limit) sign.textContent = limit;
+  const tooFast = Boolean(limit) && state.speedKmh >= limit + Math.max(5, limit * 0.1);
+  sign.classList.toggle('is-over', tooFast);
+  $('speed').classList.toggle('is-over', tooFast);
+}
+
+/** Gefahrenen Teil der Route grau färben. */
+function setDoneFraction(fraction, { force = false } = {}) {
+  if (!force && Math.abs(fraction - routeState.doneFraction) < 0.0005) return;
+  routeState.doneFraction = fraction;
+  if (map?.getLayer('route-done')) {
+    map.setPaintProperty('route-done', 'line-gradient', routeDoneGradient(settings.theme, fraction));
+  }
+}
+
+function renderVoiceButton() {
+  $('btn-voice').innerHTML = settings.voiceMuted ? ICONS.voiceOff : ICONS.voiceOn;
+  $('btn-voice').setAttribute('aria-label', settings.voiceMuted ? 'Sprachansagen einschalten' : 'Sprachansagen stumm');
+  $('btn-voice').classList.toggle('is-muted', settings.voiceMuted);
 }
 
 /** Route beenden erst beim zweiten Tippen – gegen versehentliches Beenden während der Fahrt. */
@@ -780,6 +961,7 @@ function loadSettings() {
     cockpit: 'right',
     route: { avoidHighways: false, avoidTolls: false, avoidFerries: false },
     plan: { mode: 'dest', unit: 'km', km: 100, hours: 2, direction: null },
+    voiceMuted: false,
   };
   try {
     return { ...defaults, ...JSON.parse(localStorage.getItem(SETTINGS_KEY)) };
