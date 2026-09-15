@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="de" data-theme="night">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="theme-color" content="#0b0d10">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="MotoDash">
+  <title>MotoDash</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@6.9.1/dist/maplibre-gl.css">
+  <link rel="stylesheet" href="css/style.css">
+  <script type="module" src="js/app.js"></script>
+</head>
+<body>
+  <div id="app">
+    <div id="map-wrap">
+      <div id="map"></div>
+
+      <button id="demo-badge" class="badge" hidden>
+        <b>DEMO</b><span>Beenden</span>
+        <svg class="i" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+
+      <div class="fabs">
+        <button id="btn-zoom-in" class="fab" aria-label="Hineinzoomen">
+          <svg class="i" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+        </button>
+        <button id="btn-zoom-out" class="fab" aria-label="Herauszoomen">
+          <svg class="i" viewBox="0 0 24 24"><path d="M5 12h14"/></svg>
+        </button>
+        <button id="btn-recenter" class="fab fab-accent" aria-label="Zentrieren" hidden>
+          <svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <aside id="panel">
+      <div class="speedo">
+        <div id="speed" class="speed-value">–</div>
+        <div class="speed-unit">km/h</div>
+      </div>
+
+      <div class="meta">
+        <div id="clock" class="clock">--:--</div>
+        <div class="stat"><span class="stat-label">Höhe</span><span id="altitude" class="stat-value">–</span></div>
+        <div class="chips">
+          <span id="gps" class="chip" data-level="off"><i class="dot"></i><span>GPS aus</span></span>
+          <button id="display" class="chip" data-level="off"><i class="dot"></i><span>Bildschirm</span></button>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button id="btn-view" class="action"></button>
+        <button id="btn-theme" class="action"></button>
+      </div>
+    </aside>
+  </div>
+
+  <div id="start" class="overlay">
+    <div class="start-card">
+      <svg class="brand-mark" viewBox="0 0 48 48" aria-hidden="true"><path d="M24 5 L40 42 L24 33 L8 42 Z"/></svg>
+      <h1>MotoDash</h1>
+      <p class="tagline">Dein Cockpit fürs Motorrad</p>
+
+      <p id="start-error" class="error" hidden></p>
+
+      <button id="btn-live" class="btn btn-primary">Losfahren</button>
+      <button id="btn-demo" class="btn btn-secondary">Demo-Fahrt · Schwarzwald</button>
+
+      <p class="note note-warn">
+        <svg class="i" viewBox="0 0 24 24"><path d="M12 3l10 18H2z"/><path d="M12 10v5M12 18v.01"/></svg>
+        <span>Bitte nur im Stand bedienen. Während der Fahrt reicht ein kurzer Blick.</span>
+      </p>
+      <p id="install-hint" class="note" hidden>
+        Tipp: In Safari auf <b>Teilen</b> → <b>„Zum Home-Bildschirm“</b> tippen. Dann startet MotoDash wie eine echte App im Vollbild.
+      </p>
+    </div>
+  </div>
+</body>
+</html>
