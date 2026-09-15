@@ -751,7 +751,30 @@ svg.i {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
   padding-left: 4px;
+}
+
+.chooser-title {
+  white-space: nowrap;
+}
+
+.chooser-head-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.chooser-head .text-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 10px;
+  white-space: nowrap;
+}
+
+.chooser-head .text-btn svg {
+  width: 20px;
+  height: 20px;
 }
 
 .chooser-title {
@@ -997,6 +1020,14 @@ svg.i {
     left: auto;
     right: calc(48px + var(--edge-right));
   }
+}
+
+.toast.is-error {
+  max-width: 85%;
+  border-color: var(--bad);
+  font-size: 17px;
+  white-space: normal;
+  text-align: center;
 }
 
 .toast {
@@ -1379,4 +1410,180 @@ svg.i {
 .dialog-actions .btn {
   min-height: 56px;
   font-size: 17px;
+}
+
+/* ---------- Rundtour & Umschalter ---------- */
+
+.mode-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  margin-bottom: 14px;
+  padding: 4px;
+  border-radius: 16px;
+  background: var(--panel);
+}
+
+.mode-tabs button {
+  min-height: 50px;
+  border-radius: 12px;
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.mode-tabs button[aria-selected="true"] {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.tour-card {
+  padding: 14px 16px 18px;
+  border-radius: 16px;
+  background: var(--panel);
+}
+
+.tour-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.tour-head .section-title {
+  margin: 0;
+}
+
+.unit-switch {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 12px;
+  background: var(--panel-2);
+}
+
+.unit-switch button {
+  min-width: 64px;
+  min-height: 40px;
+  border-radius: 10px;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.unit-switch button[aria-checked="true"] {
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+}
+
+.tour-value {
+  margin: 10px 0 12px;
+  font-size: 40px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.tour-card .chip-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  margin-bottom: 18px;
+}
+
+.tour-card .chip-btn {
+  padding: 0 4px;
+}
+
+.chip-btn[aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+/* Großer Regler, auch mit Handschuhen greifbar. */
+.slider {
+  width: 100%;
+  height: 44px;
+  margin: 0;
+  background: transparent;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.slider::-webkit-slider-runnable-track {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--line);
+}
+
+.slider::-webkit-slider-thumb {
+  width: 36px;
+  height: 36px;
+  margin-top: -14px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 3px solid #ffffff;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.slider::-moz-range-track {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--line);
+}
+
+.slider::-moz-range-thumb {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 3px solid #ffffff;
+}
+
+.direction-row {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 6px;
+}
+
+.direction-row .chip-btn {
+  min-height: 52px;
+  padding: 0 4px;
+  border-radius: 14px;
+  background: var(--panel);
+}
+
+.direction-row .chip-btn[aria-pressed="true"] {
+  background: var(--accent);
+}
+
+#tour-view .note,
+#tour-view .error {
+  margin-bottom: 12px;
+}
+
+#calc-tour {
+  width: 100%;
+}
+
+/* ---------- Einstellungen: Demo, Startbildschirm ---------- */
+
+.setting + .setting {
+  margin-top: 10px;
+}
+
+.setting-btn {
+  width: 100%;
+  min-height: 56px;
+  font-size: 17px;
+}
+
+.setting .setting-btn {
+  background: var(--panel);
+}
+
+.start-settings {
+  position: absolute;
+  top: calc(14px + var(--safe-top));
+  right: max(16px, var(--safe-right));
 }
