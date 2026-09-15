@@ -812,6 +812,26 @@ svg.i {
   color: var(--muted);
 }
 
+/* Während der Routenwahl: Cockpit ausblenden, damit die ganze Karte zu sehen ist. */
+/* :root[data-cockpit] macht die Regeln stärker als die Querformat-Regeln für links/rechts. */
+:root[data-cockpit] #app.is-choosing {
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
+}
+
+:root[data-cockpit] #app.is-choosing #panel {
+  display: none;
+}
+
+:root[data-cockpit] #app.is-choosing #map-wrap {
+  grid-column: 1;
+  grid-row: 1;
+  --edge-top: var(--safe-top);
+  --edge-right: var(--safe-right);
+  --edge-bottom: var(--safe-bottom);
+  --edge-left: var(--safe-left);
+}
+
 /* Hochformat: Zoom-Knöpfe während der Routenwahl nach oben, damit sie nicht im Auswahlfenster liegen. */
 @media (orientation: portrait) {
   #app.is-choosing .fabs {
@@ -831,15 +851,29 @@ svg.i {
   font-size: 17px;
 }
 
-/* Querformat: Auswahl als Spalte am Kartenrand gegenüber vom Cockpit. */
+/* Querformat: Auswahl als Spalte auf der Seite, wo sonst das Cockpit ist (das ist dann ausgeblendet).
+   Zoom-Knöpfe und Demo-Hinweis wandern auf die andere Seite. */
 @media (orientation: landscape) {
   .chooser {
-    top: 72px;
-    right: auto;
-    width: min(290px, 55%);
+    top: calc(12px + var(--edge-top));
+    bottom: auto;
+    left: auto;
+    right: calc(12px + var(--edge-right));
+    width: min(330px, 50%);
+    max-height: calc(100% - 24px - var(--edge-top) - var(--edge-bottom));
   }
 
   :root[data-cockpit="left"] .chooser {
+    right: auto;
+    left: calc(12px + var(--edge-left));
+  }
+
+  :root[data-cockpit] #app.is-choosing .fabs {
+    right: auto;
+    left: calc(12px + var(--edge-left));
+  }
+
+  :root[data-cockpit="left"] #app.is-choosing .fabs {
     left: auto;
     right: calc(12px + var(--edge-right));
   }
@@ -852,20 +886,26 @@ svg.i {
     flex: 1;
   }
 
+  /* Kompakte Karten in einer Zeile, damit drei Routen untereinander passen. */
   .route-card {
     flex: none;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: baseline;
+    column-gap: 10px;
+    padding: 7px 12px;
   }
 
-  .chooser-actions {
-    grid-template-columns: 1fr;
+  .rc-time {
+    font-size: 20px;
+  }
+
+  .rc-tags {
+    margin-top: 0;
   }
 
   .chooser-actions .btn {
     min-height: 50px;
-  }
-
-  #route-cancel {
-    order: 2;
   }
 }
 
