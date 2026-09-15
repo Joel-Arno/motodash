@@ -13,8 +13,8 @@
   <link rel="icon" href="icons/icon-192.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@6.9.1/dist/maplibre-gl.css">
-  <link rel="stylesheet" href="css/style.css?v=1.2.2">
-  <script type="module" src="js/app.js?v=1.2.2"></script>
+  <link rel="stylesheet" href="css/style.css?v=1.3">
+  <script type="module" src="js/app.js?v=1.3"></script>
 </head>
 <body>
   <div id="app">
@@ -28,8 +28,13 @@
 
       <div id="route-chooser" class="chooser" hidden>
         <div class="chooser-head">
-          <span class="chooser-title">Route wählen</span>
-          <button id="route-edit" class="text-btn">Bearbeiten</button>
+          <span id="route-chooser-title" class="chooser-title">Route wählen</span>
+          <div class="chooser-head-actions">
+            <button id="route-reroll" class="text-btn" aria-label="Neue Vorschläge" hidden>
+              <svg class="i" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></svg><span>Neu</span>
+            </button>
+            <button id="route-edit" class="text-btn">Bearbeiten</button>
+          </div>
         </div>
         <div id="route-choice-list" class="choice-list"></div>
         <div class="chooser-actions">
@@ -113,6 +118,12 @@
         </div>
       </section>
 
+      <section class="setting">
+        <div class="setting-title">Demo-Fahrt</div>
+        <div class="setting-hint">Simulierte Fahrt durch den Schwarzwald – zum Ausprobieren ohne Motorrad.</div>
+        <button id="settings-demo" class="btn btn-secondary setting-btn">Demo-Fahrt starten</button>
+      </section>
+
       <p class="sheet-foot">MotoDash · Version <span class="app-version"></span></p>
     </div>
   </div>
@@ -127,6 +138,11 @@
         <button id="planner-close" class="text-btn">Schließen</button>
       </header>
 
+      <div id="plan-tabs" class="mode-tabs" role="tablist">
+        <button role="tab" data-plan-mode="dest">Ziel</button>
+        <button role="tab" data-plan-mode="tour">Rundtour</button>
+      </div>
+
       <section id="plan-view">
         <ol id="stop-list" class="stop-list"></ol>
         <button id="add-stop" class="row-btn">+ Ziel hinzufügen</button>
@@ -137,6 +153,37 @@
         <p id="plan-hint" class="note" hidden>Mit Zwischenzielen gibt es nur eine Route, keine Alternativen.</p>
         <p id="plan-error" class="error" hidden></p>
         <button id="calc-route" class="btn btn-primary">Route berechnen</button>
+      </section>
+
+      <section id="tour-view" hidden>
+        <div class="tour-card">
+          <div class="tour-head">
+            <span class="section-title">Länge</span>
+            <div class="unit-switch" role="radiogroup" aria-label="Länge in">
+              <button role="radio" data-tour-unit="km">km</button>
+              <button role="radio" data-tour-unit="time">Zeit</button>
+            </div>
+          </div>
+          <div id="tour-value" class="tour-value">100 km</div>
+          <div id="tour-presets" class="chip-row"></div>
+          <input id="tour-slider" class="slider" type="range" aria-label="Länge einstellen">
+        </div>
+
+        <h3 class="section-title">Richtung</h3>
+        <div class="direction-row">
+          <button class="chip-btn" data-direction="">Egal</button>
+          <button class="chip-btn" data-direction="0">Nord</button>
+          <button class="chip-btn" data-direction="90">Ost</button>
+          <button class="chip-btn" data-direction="180">Süd</button>
+          <button class="chip-btn" data-direction="270">West</button>
+        </div>
+
+        <h3 class="section-title">Optionen</h3>
+        <div id="tour-option-list" class="option-list"></div>
+
+        <p class="note">Start und Ende ist dein Standort. Die Länge ist ein Richtwert (etwa ±20 %). Du bekommst 3 Vorschläge zur Auswahl.</p>
+        <p id="tour-error" class="error" hidden></p>
+        <button id="calc-tour" class="btn btn-primary">Rundtouren finden</button>
       </section>
 
       <section id="search-view" hidden>
@@ -175,6 +222,9 @@
   </div>
 
   <div id="start" class="overlay">
+    <button id="start-settings" class="start-settings icon-btn" aria-label="Einstellungen">
+      <svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+    </button>
     <div class="start-card">
       <svg class="brand-mark" viewBox="0 0 48 48" aria-hidden="true"><path d="M24 5 L40 42 L24 33 L8 42 Z"/></svg>
       <h1>MotoDash</h1>
@@ -183,7 +233,6 @@
       <p id="start-error" class="error" hidden></p>
 
       <button id="btn-live" class="btn btn-primary">Losfahren</button>
-      <button id="btn-demo" class="btn btn-secondary">Demo-Fahrt · Schwarzwald</button>
 
       <p class="note note-warn">
         <svg class="i" viewBox="0 0 24 24"><path d="M12 3l10 18H2z"/><path d="M12 10v5M12 18v.01"/></svg>
