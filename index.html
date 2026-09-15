@@ -13,8 +13,8 @@
   <link rel="icon" href="icons/icon-192.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@6.9.1/dist/maplibre-gl.css">
-  <link rel="stylesheet" href="css/style.css?v=1.4">
-  <script type="module" src="js/app.js?v=1.4"></script>
+  <link rel="stylesheet" href="css/style.css?v=1.5">
+  <script type="module" src="js/app.js?v=1.5"></script>
 </head>
 <body>
   <div id="app">
@@ -58,6 +58,7 @@
         </div>
       </div>
 
+      <div class="map-dock">
       <div id="route-info" class="route-info" hidden>
         <div class="ri-text">
           <div class="ri-label">Ankunft</div>
@@ -68,6 +69,24 @@
           <svg class="i" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
           <span>Beenden?</span>
         </button>
+      </div>
+
+      <div id="music-bar" class="music-bar" hidden>
+        <img id="music-cover" class="music-cover" alt="" hidden>
+        <div class="music-text">
+          <div id="music-title" class="music-title"></div>
+          <div id="music-artist" class="music-artist"></div>
+        </div>
+        <div class="music-controls">
+          <button id="music-prev" class="music-btn music-prev" aria-label="Vorheriger Titel">
+            <svg class="i" viewBox="0 0 24 24"><path d="M6 5v14M19 5L9 12l10 7z"/></svg>
+          </button>
+          <button id="music-toggle" class="music-btn music-main" aria-label="Wiedergabe"></button>
+          <button id="music-next" class="music-btn" aria-label="Nächster Titel">
+            <svg class="i" viewBox="0 0 24 24"><path d="M18 5v14M5 5l10 7-10 7z"/></svg>
+          </button>
+        </div>
+      </div>
       </div>
 
       <div id="toast" class="toast" role="status" hidden></div>
@@ -100,6 +119,10 @@
           <div id="clock" class="clock">--:--</div>
           <div class="stat"><span class="stat-label">Höhe</span><span id="altitude" class="stat-value">–</span></div>
         </div>
+        <button id="weather" class="weather" aria-label="Wetter" hidden>
+          <span id="weather-now" class="weather-now"></span>
+          <span id="weather-rain" class="weather-rain"></span>
+        </button>
         <div class="chips">
           <span id="gps" class="chip" data-level="off"><i class="dot"></i><span>GPS aus</span></span>
           <button id="display" class="chip" data-level="off"><i class="dot"></i><span>Display</span></button>
@@ -138,12 +161,77 @@
       </section>
 
       <section class="setting">
+        <div class="setting-title">Spotify</div>
+        <div id="spotify-hint" class="setting-hint"></div>
+        <div id="spotify-client">
+          <input id="spotify-client-id" class="text-input" type="text" placeholder="Client-ID aus dem Spotify-Dashboard" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+          <p class="note">Redirect-URI für deine Spotify-App: <b id="spotify-redirect" class="selectable"></b></p>
+        </div>
+        <p id="spotify-message" class="error" hidden></p>
+        <button id="spotify-connect" class="btn btn-secondary setting-btn">Mit Spotify verbinden</button>
+      </section>
+
+      <section class="setting">
+        <div class="setting-title">Fahrt</div>
+        <div id="ride-hint" class="setting-hint"></div>
+        <button id="ride-end" class="btn btn-secondary setting-btn" hidden>Fahrt beenden &amp; Auswertung</button>
+        <button id="ride-last" class="btn btn-secondary setting-btn" hidden>Letzte Fahrt ansehen</button>
+      </section>
+
+      <section class="setting">
         <div class="setting-title">Demo-Fahrt</div>
         <div class="setting-hint">Simulierte Fahrt durch den Schwarzwald – zum Ausprobieren ohne Motorrad.</div>
         <button id="settings-demo" class="btn btn-secondary setting-btn">Demo-Fahrt starten</button>
       </section>
 
       <p class="sheet-foot">MotoDash · Version <span class="app-version"></span></p>
+    </div>
+  </div>
+
+  <div id="weather-sheet" class="sheet-backdrop" hidden>
+    <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="weather-title">
+      <div class="sheet-head">
+        <h2 id="weather-title">Wetter</h2>
+        <button id="weather-close" class="sheet-close">Fertig</button>
+      </div>
+      <div id="weather-summary" class="weather-summary"></div>
+      <h3 class="section-title">Regen · nächste 2 Stunden</h3>
+      <div id="weather-bars" class="rain-bars"></div>
+      <div id="weather-bar-labels" class="rain-labels"></div>
+      <h3 class="section-title">Nächste Stunden</h3>
+      <ul id="weather-hours" class="weather-hours"></ul>
+      <p class="sheet-foot">Wetterdaten: Open-Meteo.com · Standort beim letzten Abruf</p>
+    </div>
+  </div>
+
+  <div id="ride-summary" class="sheet-backdrop" hidden>
+    <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="summary-title">
+      <div class="sheet-head">
+        <h2 id="summary-title">Deine Fahrt</h2>
+        <button id="summary-close" class="sheet-close">Fertig</button>
+      </div>
+      <p id="sum-date" class="note"></p>
+      <div class="stats-grid">
+        <div class="stat-tile"><span>Strecke</span><b id="sum-distance">–</b></div>
+        <div class="stat-tile"><span>Fahrzeit</span><b id="sum-moving">–</b></div>
+        <div class="stat-tile"><span>Ø Tempo</span><b id="sum-avg">–</b></div>
+        <div class="stat-tile"><span>Max. Tempo</span><b id="sum-max">–</b></div>
+        <div class="stat-tile"><span>Höhenmeter</span><b id="sum-climb">–</b></div>
+        <div class="stat-tile"><span>Unterwegs</span><b id="sum-total">–</b></div>
+      </div>
+      <h3 class="section-title">Maximale Schräglage</h3>
+      <div class="lean-card">
+        <div class="lean-side"><span>Links</span><b id="sum-lean-left">–</b></div>
+        <svg class="lean-gauge" viewBox="0 0 200 112" aria-hidden="true">
+          <path class="lean-arc" d="M18 104A82 82 0 0 1 182 104"/>
+          <path class="lean-tick" d="M100 22v10M42 46l7 7M158 46l-7 7"/>
+          <line id="lean-needle-left" class="lean-needle" x1="100" y1="104" x2="100" y2="30"/>
+          <line id="lean-needle-right" class="lean-needle" x1="100" y1="104" x2="100" y2="30"/>
+          <circle cx="100" cy="104" r="6" class="lean-hub"/>
+        </svg>
+        <div class="lean-side"><span>Rechts</span><b id="sum-lean-right">–</b></div>
+      </div>
+      <p class="note">Berechnet aus Tempo und Kurvenradius – ein Richtwert, keine Messung.</p>
     </div>
   </div>
 
