@@ -1,8 +1,8 @@
 // Simulierte Fahrt entlang einer festen Strecke – zum Testen ohne Motorrad.
 // Liefert Positionen im selben Format wie das echte GPS.
 
-import { angleDiff, bearing, distance } from './geo.js?v=1.1';
-import DEMO_ROUTE from './demo-route.js?v=1.1';
+import { angleDiff, bearing, distance } from './geo.js?v=1.2';
+import DEMO_ROUTE from './demo-route.js?v=1.2';
 
 const TICK_MS = 1000;
 const MAX_SPEED = 100 / 3.6; // m/s
@@ -13,6 +13,19 @@ const BRAKING = 3.5;
 export class DemoRide {
   constructor(onPosition, coords = DEMO_ROUTE) {
     this.onPosition = onPosition;
+    this.setCoords(coords);
+    this.loop = true;
+    this.speed = 0;
+    this.timer = null;
+  }
+
+  /** Demo fährt ab jetzt die berechnete Route ab und bleibt am Ziel stehen. */
+  followRoute(coords) {
+    this.setCoords(coords);
+    this.loop = false;
+  }
+
+  setCoords(coords) {
     this.coords = coords;
     this.cumulative = [0];
     for (let i = 1; i < coords.length; i++) {
@@ -20,8 +33,6 @@ export class DemoRide {
     }
     this.total = this.cumulative.at(-1);
     this.travelled = 0;
-    this.speed = 0;
-    this.timer = null;
   }
 
   start() {
@@ -39,7 +50,7 @@ export class DemoRide {
     this.speed += Math.max(-BRAKING, Math.min(ACCELERATION, dv)) * (TICK_MS / 1000);
     this.travelled += this.speed * (TICK_MS / 1000);
     if (this.travelled >= this.total) {
-      this.travelled = 0;
+      this.travelled = this.loop ? 0 : this.total;
       this.speed = 0;
     }
     this.emit();

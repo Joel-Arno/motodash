@@ -1,11 +1,14 @@
 import * as maplibregl from 'https://cdn.jsdelivr.net/npm/maplibre-gl@6.9.1/dist/maplibre-gl.mjs';
 // Die ?v=… Anhänge sorgen dafür, dass das iPhone nach einem Update die neuen Dateien lädt.
-// Bei jeder Änderung APP_VERSION und alle ?v= (hier, in demo.js und index.html) gemeinsam erhöhen.
-import { buildStyle } from './map-style.js?v=1.1';
-import { DemoRide } from './demo.js?v=1.1';
-import { angleDiff, bearing, distance } from './geo.js?v=1.1';
+// Bei jeder Änderung APP_VERSION und alle ?v= (in allen js-Dateien und index.html) gemeinsam erhöhen.
+import { buildStyle } from './map-style.js?v=1.2';
+import { DemoRide } from './demo.js?v=1.2';
+import { angleDiff, bearing, distance } from './geo.js?v=1.2';
+import { createPlanner } from './planner.js?v=1.2';
+import { fetchRoutes, RouteProgress } from './routing.js?v=1.2';
 
-const APP_VERSION = '1.1';
+const APP_VERSION = '1.2';
+const ARRIVAL_METERS = 30;
 
 const $ = (id) => document.getElementById(id);
 const clamp = (v, min, max) => Math.min(max, Math.max(min, v));
@@ -16,6 +19,7 @@ const ICONS = {
   north: '<svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.5 15.5v-7l5 7v-7"/></svg>',
   night: '<svg class="i" viewBox="0 0 24 24"><path d="M20 14.5A8.5 8.5 0 1 1 9.5 4 6.5 6.5 0 0 0 20 14.5z"/></svg>',
   settings: '<svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>',
+  route: '<svg class="i" viewBox="0 0 24 24"><path d="M5 21V4M5 4h11l-2 4 2 4H5"/></svg>',
   day: '<svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>',
 };
 
@@ -44,10 +48,13 @@ const state = {
 const view = { lng: null, lat: null, heading: null, zoom: 16 };
 const anim = { from: null, to: null, start: 0, duration: 1000, lastTargetAt: 0, raf: 0 };
 const wake = { lock: null, wanted: false };
+// phase: null (keine Route) | 'choose' (Routen zur Auswahl) | 'active' (Route wird gefahren)
+const routeState = { phase: null, routes: [], selected: 0, stops: [], progress: null, markers: [] };
 const clockFormat = new Intl.DateTimeFormat('de-DE', { hour: '2-digit', minute: '2-digit' });
 
 let map;
 let marker;
+let planner;
 const markerEl = document.createElement('div');
 markerEl.className = 'rider';
 markerEl.innerHTML = '<svg viewBox="0 0 48 48"><path d="M24 5 L40 42 L24 33 L8 42 Z"/></svg>';
@@ -125,7 +132,25 @@ function init() {
     saveSettings();
     applyTheme();
     renderButtons();
-    map.setStyle(buildStyle(settings.theme));
+    map.setStyle(buildStyle(settings.theme, { route: routeGeoJSON() }));
+  });
+
+  planner = createPlanner({
+    getOrigin: () => (state.lastFix ? { lng: state.lastFix.lng, lat: state.lastFix.lat } : null),
+    routeOptions: settings.route,
+    onOptionsChange: (options) => {
+      settings.route = options;
+      saveSettings();
+    },
+    onCalculate: showRouteChoices,
+  });
+  $('btn-route').addEventListener('click', () => planner.open());
+  $('route-start').addEventListener('click', startRoute);
+  $('route-edit').addEventListener('click', () => planner.open());
+  $('route-cancel').addEventListener('click', () => clearRoute({ keepStops: true }));
+  $('route-end').addEventListener('click', onEndRouteTap);
+  map.on('click', 'route-hit', (e) => {
+    if (routeState.phase === 'choose') selectRoute(e.features[0].properties.index);
   });
 
   $('btn-settings').addEventListener('click', () => ($('settings').hidden = false));
@@ -197,6 +222,7 @@ function stop() {
   Object.assign(view, { lng: null, lat: null, heading: null, zoom: 16 });
   marker.remove();
   releaseWakeLock();
+  clearRoute();
 
   $('speed').textContent = '–';
   $('altitude').textContent = '–';
@@ -246,6 +272,7 @@ function onPosition(fix) {
   setChip('gps', ...gpsStatus(fix));
 
   animateTo({ lng: fix.lng, lat: fix.lat, heading: state.heading, zoom: autoZoom(state.speedKmh) });
+  updateRouteProgress();
 }
 
 function gpsStatus(fix) {
@@ -336,7 +363,8 @@ function render(now) {
 
 function setFollow(follow) {
   state.follow = follow;
-  $('btn-recenter').hidden = follow || view.lng == null;
+  // Während der Routenwahl bringen „Abbrechen“/„Starten“ zurück zur Position.
+  $('btn-recenter').hidden = follow || view.lng == null || routeState.phase === 'choose';
   // Beim Mitfahren um die eigene Position zoomen, beim freien Umschauen um die Finger.
   const around = follow ? { around: 'center' } : true;
   map?.touchZoomRotate.enable(around);
@@ -400,6 +428,195 @@ function zoomBy(delta) {
   }
 }
 
+// ---------- Route ----------
+
+async function showRouteChoices(points, options) {
+  const routes = await fetchRoutes(points, options);
+  Object.assign(routeState, { phase: 'choose', routes, selected: 0, stops: points.slice(1), progress: null });
+
+  $('route-info').hidden = true;
+  $('route-chooser').hidden = false;
+  $('app').classList.add('is-choosing');
+  $('route-start-label').textContent = routes.length > 1 ? 'Diese Route starten' : 'Route starten';
+  renderRouteChoices();
+  renderRoute();
+  renderStopMarkers();
+  setFollow(false);
+  // Das Auswahlfenster muss erst sichtbar sein, damit die Karte daneben eingepasst werden kann.
+  requestAnimationFrame(fitRoutesIntoView);
+}
+
+function selectRoute(index) {
+  routeState.selected = index;
+  renderRouteChoices();
+  renderRoute();
+}
+
+function startRoute() {
+  const route = routeState.routes[routeState.selected];
+  routeState.phase = 'active';
+  routeState.progress = new RouteProgress(route);
+  $('route-chooser').hidden = true;
+  $('app').classList.remove('is-choosing');
+  $('route-info').hidden = false;
+  renderRoute();
+  if (state.mode === 'demo') state.demo.followRoute(route.coords);
+  updateRouteProgress();
+  recenter();
+}
+
+/** @param keepStops true = Ziele bleiben im Planer zum Bearbeiten erhalten */
+function clearRoute({ keepStops = false } = {}) {
+  Object.assign(routeState, { phase: null, routes: [], selected: 0, stops: [], progress: null });
+  if (!keepStops) planner?.clearStops();
+  $('route-chooser').hidden = true;
+  $('app').classList.remove('is-choosing');
+  $('route-info').hidden = true;
+  if (!map) return;
+  renderRoute();
+  renderStopMarkers();
+  if (state.mode && !state.follow) recenter();
+}
+
+function updateRouteProgress() {
+  if (routeState.phase !== 'active' || !state.lastFix) return;
+  const { remainingMeters, remainingSeconds } = routeState.progress.update(state.lastFix.lng, state.lastFix.lat);
+  $('route-eta').textContent = clockFormat.format(new Date(Date.now() + remainingSeconds * 1000));
+  $('route-remaining').textContent = `${formatDistance(remainingMeters)} · ${formatDuration(remainingSeconds)}`;
+  if (remainingMeters < ARRIVAL_METERS) {
+    clearRoute();
+    showToast('Ziel erreicht');
+  }
+}
+
+/** Route beenden erst beim zweiten Tippen – gegen versehentliches Beenden während der Fahrt. */
+function onEndRouteTap() {
+  const button = $('route-end');
+  if (button.classList.contains('is-confirm')) {
+    button.classList.remove('is-confirm');
+    clearRoute();
+    return;
+  }
+  button.classList.add('is-confirm');
+  setTimeout(() => button.classList.remove('is-confirm'), 3000);
+}
+
+function routeGeoJSON() {
+  const { phase, routes, selected } = routeState;
+  return {
+    type: 'FeatureCollection',
+    features: routes
+      .map((route, index) => ({
+        type: 'Feature',
+        properties: { index, selected: index === selected },
+        geometry: { type: 'LineString', coordinates: route.coords },
+      }))
+      .filter((feature) => phase !== 'active' || feature.properties.selected),
+  };
+}
+
+function renderRoute() {
+  map.getSource('route')?.setData(routeGeoJSON());
+}
+
+function renderStopMarkers() {
+  routeState.markers.forEach((m) => m.remove());
+  routeState.markers = routeState.stops.map((stop, i) => {
+    const el = document.createElement('div');
+    const isDestination = i === routeState.stops.length - 1;
+    el.className = `stop-marker${isDestination ? ' is-destination' : ''}`;
+    if (isDestination) el.innerHTML = ICONS.route;
+    else el.textContent = String(i + 1);
+    return new maplibregl.Marker({ element: el }).setLngLat([stop.lng, stop.lat]).addTo(map);
+  });
+}
+
+function renderRouteChoices() {
+  const now = Date.now();
+  $('route-choice-list').replaceChildren(
+    ...routeState.routes.map((route, index) => {
+      const card = document.createElement('button');
+      card.className = 'route-card';
+      card.setAttribute('aria-pressed', String(index === routeState.selected));
+      card.innerHTML = '<div class="rc-time"></div><div class="rc-sub"></div><div class="rc-sub"></div><div class="rc-tags"></div>';
+      const [distanceLine, arrivalLine] = card.querySelectorAll('.rc-sub');
+      card.querySelector('.rc-time').textContent = formatDuration(route.timeSeconds);
+      distanceLine.textContent = formatDistance(route.lengthMeters);
+      arrivalLine.textContent = `an ${clockFormat.format(new Date(now + route.timeSeconds * 1000))}`;
+      const tags = [
+        index === 0 && routeState.routes.length > 1 && 'Empfohlen',
+        route.hasHighway && 'Autobahn',
+        route.hasToll && 'Maut',
+        route.hasFerry && 'Fähre',
+      ].filter(Boolean);
+      card.querySelector('.rc-tags').replaceChildren(
+        ...tags.map((tag) => Object.assign(document.createElement('span'), { className: 'rc-tag', textContent: tag })),
+      );
+      card.addEventListener('click', () => selectRoute(index));
+      return card;
+    }),
+  );
+}
+
+/** Alle Routen so zeigen, dass sie nicht unter dem Auswahlfenster oder den Knöpfen liegen. */
+function fitRoutesIntoView() {
+  let minLng = Infinity;
+  let minLat = Infinity;
+  let maxLng = -Infinity;
+  let maxLat = -Infinity;
+  for (const route of routeState.routes) {
+    for (const [lng, lat] of route.coords) {
+      minLng = Math.min(minLng, lng);
+      maxLng = Math.max(maxLng, lng);
+      minLat = Math.min(minLat, lat);
+      maxLat = Math.max(maxLat, lat);
+    }
+  }
+  if (!Number.isFinite(minLng)) return;
+
+  const wrap = $('map-wrap').getBoundingClientRect();
+  const chooser = $('route-chooser').getBoundingClientRect();
+  const fabs = document.querySelector('.fabs').getBoundingClientRect();
+  const badge = $('demo-badge').getBoundingClientRect();
+  const padding = { top: 50, bottom: 30, left: 30, right: 30 };
+  if (!$('demo-badge').hidden) padding.top = badge.bottom - wrap.top + 24;
+
+  if (chooser.width > wrap.width * 0.6) {
+    padding.bottom = wrap.bottom - chooser.top + 20; // Auswahl unten (Hochformat)
+  } else if (chooser.left - wrap.left < wrap.right - chooser.right) {
+    padding.left = chooser.right - wrap.left + 20; // Auswahl links
+  } else {
+    padding.right = wrap.right - chooser.left + 20; // Auswahl rechts
+  }
+  if (fabs.left - wrap.left < wrap.right - fabs.right) padding.left = Math.max(padding.left, fabs.right - wrap.left + 16);
+  else padding.right = Math.max(padding.right, wrap.right - fabs.left + 16);
+
+  map.jumpTo({ bearing: 0, pitch: 0, padding: { top: 0, bottom: 0, left: 0, right: 0 } });
+  map.fitBounds([[minLng, minLat], [maxLng, maxLat]], { padding, maxZoom: 15, duration: 700 });
+}
+
+function formatDistance(meters) {
+  if (meters < 950) return `${Math.max(10, Math.round(meters / 10) * 10)} m`;
+  if (meters < 10000) {
+    return `${(meters / 1000).toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} km`;
+  }
+  return `${Math.round(meters / 1000).toLocaleString('de-DE')} km`;
+}
+
+function formatDuration(seconds) {
+  const minutes = Math.max(1, Math.round(seconds / 60));
+  if (minutes < 60) return `${minutes} min`;
+  return `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, '0')} h`;
+}
+
+let toastTimer = 0;
+function showToast(text) {
+  $('toast').textContent = text;
+  $('toast').hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => ($('toast').hidden = true), 4000);
+}
+
 // ---------- Bildschirm an lassen ----------
 
 async function requestWakeLock() {
@@ -456,6 +673,7 @@ function renderButtons() {
   const night = settings.theme === 'night';
   $('btn-view').innerHTML = `${headingUp ? ICONS.heading : ICONS.north}<span>${headingUp ? 'Fahrtrichtung' : 'Norden oben'}</span>`;
   $('btn-theme').innerHTML = `${night ? ICONS.night : ICONS.day}<span>${night ? 'Nacht' : 'Tag'}</span>`;
+  $('btn-route').innerHTML = `${ICONS.route}<span>Ziel</span>`;
   $('btn-settings').innerHTML = `${ICONS.settings}<span>Einstellungen</span>`;
 }
 
@@ -490,7 +708,12 @@ function hideStartError() {
 }
 
 function loadSettings() {
-  const defaults = { theme: 'night', view: 'heading', cockpit: 'right' };
+  const defaults = {
+    theme: 'night',
+    view: 'heading',
+    cockpit: 'right',
+    route: { avoidHighways: false, avoidTolls: false, avoidFerries: false },
+  };
   try {
     return { ...defaults, ...JSON.parse(localStorage.getItem(SETTINGS_KEY)) };
   } catch {

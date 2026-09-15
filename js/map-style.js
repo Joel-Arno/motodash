@@ -34,6 +34,10 @@ const PALETTES = {
     waterLabel: '#5b9cc2',
     ref: '#ffd24d',
     refHalo: '#0d1014',
+    route: '#4f9dff',
+    routeCasing: '#0a2a55',
+    routeAlt: '#5f6a7a',
+    routeAltCasing: '#1b2129',
   },
   day: {
     background: '#f1f0ea',
@@ -62,6 +66,10 @@ const PALETTES = {
     waterLabel: '#3b72a1',
     ref: '#1d2126',
     refHalo: '#f6c552',
+    route: '#1a73e8',
+    routeCasing: '#0b4aa8',
+    routeAlt: '#9aa5b3',
+    routeAltCasing: '#6f7a88',
   },
 };
 
@@ -118,6 +126,33 @@ function roadLayers(p) {
   return [...casings, ...fills];
 }
 
+// Gewählte Route kräftig, Alternativen grau darunter. Liegt über den Straßen, unter den Beschriftungen.
+function routeLayers(p) {
+  const selected = ['==', ['get', 'selected'], true];
+  const alternative = ['!=', ['get', 'selected'], true];
+  const line = (id, filter, color, width) => ({
+    id,
+    type: 'line',
+    source: 'route',
+    filter,
+    layout: { 'line-cap': 'round', 'line-join': 'round' },
+    paint: { 'line-color': color, 'line-width': byZoom(width) },
+  });
+  return [
+    line('route-alt-casing', alternative, p.routeAltCasing, [[5, 4], [14, 11], [18, 26]]),
+    line('route-alt', alternative, p.routeAlt, [[5, 2.5], [14, 7], [18, 18]]),
+    line('route-casing', selected, p.routeCasing, [[5, 5], [14, 13], [18, 30]]),
+    line('route-line', selected, p.route, [[5, 3.5], [14, 9], [18, 22]]),
+    // Unsichtbare, breite Linie, damit man Alternativen mit dem Finger leicht antippen kann.
+    {
+      id: 'route-hit',
+      type: 'line',
+      source: 'route',
+      paint: { 'line-color': '#000000', 'line-opacity': 0, 'line-width': 36 },
+    },
+  ];
+}
+
 function placeLayer(id, classes, minzoom, sizes, p, { bold = false, muted = false } = {}) {
   return {
     id,
@@ -141,7 +176,10 @@ function placeLayer(id, classes, minzoom, sizes, p, { bold = false, muted = fals
   };
 }
 
-export function buildStyle(theme) {
+const EMPTY_COLLECTION = { type: 'FeatureCollection', features: [] };
+
+/** @param route aktuelle Routen als GeoJSON – bleibt so auch beim Wechsel Tag/Nacht erhalten */
+export function buildStyle(theme, { route = EMPTY_COLLECTION } = {}) {
   const p = PALETTES[theme] ?? PALETTES.night;
 
   return {
@@ -150,6 +188,7 @@ export function buildStyle(theme) {
     glyphs: 'https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf',
     sources: {
       [SOURCE]: { type: 'vector', url: 'https://tiles.openfreemap.org/planet' },
+      route: { type: 'geojson', data: route },
     },
     layers: [
       { id: 'background', type: 'background', paint: { 'background-color': p.background } },
@@ -222,6 +261,7 @@ export function buildStyle(theme) {
       },
 
       ...roadLayers(p),
+      ...routeLayers(p),
 
       {
         id: 'water-name',
