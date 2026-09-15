@@ -11,7 +11,7 @@ const STORE_KEY = 'motodash.spotify';
 const DEFAULT_CLIENT_ID = '';
 
 export class SpotifyError extends Error {
-  /** @param {'not-connected'|'auth'|'premium'|'rate-limit'|'network'|'http'} code */
+  /** @param {'not-connected'|'auth'|'premium'|'no-device'|'restricted'|'rate-limit'|'network'|'http'} code */
   constructor(code, message) {
     super(message);
     this.code = code;
@@ -99,10 +99,13 @@ export async function getPlayback() {
     title: item.name,
     artist: (item.artists ?? []).map((artist) => artist.name).join(', ') || item.show?.name || '',
     cover: cover?.url ?? null,
+    deviceId: data.device?.id ?? null,
   };
 }
 
-export const play = () => api('PUT', '/me/player/play');
+/** @param deviceId optional: gezielt dieses Gerät ansprechen (weckt ein eingeschlafenes Spotify eher auf) */
+export const play = (deviceId) =>
+  api('PUT', `/me/player/play${deviceId ? `?device_id=${encodeURIComponent(deviceId)}` : ''}`);
 export const pause = () => api('PUT', '/me/player/pause');
 export const nextTrack = () => api('POST', '/me/player/next');
 export const previousTrack = () => api('POST', '/me/player/previous');
@@ -120,13 +123,32 @@ async function api(method, path, retry = true) {
     store.expiresAt = 0; // Token abgelaufen – erneuern und nochmal
     return api(method, path, false);
   }
-  if (response.status === 204 || response.status === 404) return null; // nichts spielt / kein aktives Gerät
-  if (response.status === 403) throw new SpotifyError('premium', 'Spotify erlaubt das nur mit Premium.');
+  const text = await response.text();
+  const data = parseJson(text);
+
+  if (response.status === 204) return null; // nichts spielt
+  if (response.status === 404) {
+    if (method === 'GET') return null;
+    throw new SpotifyError('no-device', 'Spotify ist gerade nicht aktiv.');
+  }
+  if (response.status === 403) {
+    if (data?.error?.reason === 'PREMIUM_REQUIRED') throw new SpotifyError('premium', 'Spotify erlaubt das nur mit Premium.');
+    // z. B. „schon pausiert“ oder „kein vorheriger Titel“ – kein echter Fehler
+    throw new SpotifyError('restricted', data?.error?.message ?? 'Spotify lässt das gerade nicht zu.');
+  }
   if (response.status === 429) throw new SpotifyError('rate-limit', 'Zu viele Anfragen an Spotify.');
   if (!response.ok) throw new SpotifyError('http', `Spotify-Fehler ${response.status}.`);
+  return data;
+}
 
-  const text = await response.text();
-  return text ? JSON.parse(text) : null;
+/** Steuerbefehle schicken teils nur eine Kennung als Text zurück statt JSON – das ist kein Fehler. */
+function parseJson(text) {
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
 }
 
 // ---------- Anmeldung ----------

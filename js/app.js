@@ -11,9 +11,9 @@ import { Navigation, maneuverIcon, maneuverShort, maneuverTitle } from './naviga
 import { setMuted, speak, unlockVoice, voiceSupported } from './voice.js?v=1.4';
 import { RideStats } from './ride-stats.js?v=1.5';
 import { describeWeather, fetchWeather, rainSummary } from './weather.js?v=1.5';
-import * as spotify from './spotify.js?v=1.5';
+import * as spotify from './spotify.js?v=1.5.1';
 
-const APP_VERSION = '1.5';
+const APP_VERSION = '1.5.1';
 const WEATHER_REFRESH_MS = 10 * 60 * 1000;
 const WEATHER_MOVE_METERS = 10000; // nach so viel Strecke neu abfragen
 const MUSIC_POLL_MS = 5000;
@@ -102,7 +102,7 @@ const routeState = {
 const clockFormat = new Intl.DateTimeFormat('de-DE', { hour: '2-digit', minute: '2-digit' });
 
 const weatherState = { data: null, loading: false, failedAt: 0 };
-const music = { playback: null, lastPlayingAt: 0, timer: 0, polling: false };
+const music = { playback: null, lastPlayingAt: 0, deviceId: null, timer: 0, polling: false };
 
 let map;
 let marker;
@@ -1084,11 +1084,19 @@ async function pollMusic() {
   if (!state.mode || !spotify.isConnected() || music.polling || document.visibilityState !== 'visible') return;
   music.polling = true;
   try {
-    music.playback = await spotify.getPlayback();
-    if (music.playback?.isPlaying) music.lastPlayingAt = Date.now();
+    const playback = await spotify.getPlayback();
+    if (playback) {
+      music.playback = playback;
+      if (playback.isPlaying) music.lastPlayingAt = Date.now();
+      if (playback.deviceId) music.deviceId = playback.deviceId;
+    } else if (music.playback) {
+      // Pausiert lässt iOS Spotify im Hintergrund schnell „einschlafen“ – dann meldet Spotify gar nichts mehr.
+      // Letzten Titel als pausiert weiter anzeigen, damit man wieder starten kann.
+      music.playback = { ...music.playback, isPlaying: false };
+    }
   } catch (err) {
-    // Bei Netzproblemen den letzten Stand behalten, sonst ausblenden.
-    if (err.code !== 'network' && err.code !== 'rate-limit') music.playback = null;
+    // Nur bei getrennter Verbindung ausblenden – bei Netzproblemen den letzten Stand behalten.
+    if (err.code === 'not-connected' || err.code === 'auth') music.playback = null;
   } finally {
     music.polling = false;
     renderMusic();
@@ -1119,16 +1127,39 @@ async function toggleMusic() {
   playback.isPlaying = !wasPlaying; // sofort anzeigen, Spotify braucht etwa eine Sekunde
   music.lastPlayingAt = Date.now();
   renderMusic();
-  await musicCommand(wasPlaying ? spotify.pause : spotify.play);
+  const ok = await musicCommand(wasPlaying ? spotify.pause : resumeMusic);
+  if (!ok && music.playback) {
+    music.playback.isPlaying = wasPlaying;
+    renderMusic();
+  }
 }
 
+/** Weiterspielen – ist Spotify eingeschlafen, gezielt das zuletzt genutzte Gerät ansprechen. */
+async function resumeMusic() {
+  try {
+    await spotify.play();
+  } catch (err) {
+    if (err.code !== 'no-device' || !music.deviceId) throw err;
+    await spotify.play(music.deviceId);
+  }
+}
+
+/** @returns {Promise<boolean>} ob der Befehl angekommen ist */
 async function musicCommand(command) {
+  let ok = true;
   try {
     await command();
   } catch (err) {
-    showToast(err.message, { error: true });
+    if (err.code === 'no-device') {
+      ok = false;
+      showToast('Spotify ist eingeschlafen. Bitte einmal in der Spotify-App auf Play tippen – danach geht es hier wieder.', { error: true });
+    } else if (err.code !== 'restricted') {
+      ok = false;
+      showToast(err.message, { error: true });
+    }
   }
   setTimeout(pollMusic, 800);
+  return ok;
 }
 
 async function handleSpotifyReturn() {
