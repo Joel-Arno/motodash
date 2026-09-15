@@ -13,8 +13,8 @@
   <link rel="icon" href="icons/icon-192.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@6.9.1/dist/maplibre-gl.css">
-  <link rel="stylesheet" href="css/style.css?v=1.5">
-  <script type="module" src="js/app.js?v=1.5.3"></script>
+  <link rel="stylesheet" href="css/style.css?v=1.6">
+  <script type="module" src="js/app.js?v=1.6"></script>
 </head>
 <body>
   <div id="app">
@@ -92,6 +92,7 @@
       <div id="toast" class="toast" role="status" hidden></div>
 
       <div class="fabs">
+        <button id="btn-record" class="fab fab-record" aria-label="Aufnahme starten" hidden></button>
         <button id="btn-voice" class="fab" aria-label="Sprachansagen" hidden></button>
         <button id="btn-zoom-in" class="fab" aria-label="Hineinzoomen">
           <svg class="i" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
@@ -174,8 +175,8 @@
       <section class="setting">
         <div class="setting-title">Fahrt</div>
         <div id="ride-hint" class="setting-hint"></div>
-        <button id="ride-end" class="btn btn-secondary setting-btn" hidden>Fahrt beenden &amp; Auswertung</button>
-        <button id="ride-last" class="btn btn-secondary setting-btn" hidden>Letzte Fahrt ansehen</button>
+        <button id="ride-end" class="btn btn-secondary setting-btn" hidden>Fahrt beenden</button>
+        <button id="ride-log" class="btn btn-secondary setting-btn" hidden>Fahrtenbuch</button>
       </section>
 
       <section class="setting">
@@ -211,6 +212,12 @@
         <button id="summary-close" class="sheet-close">Fertig</button>
       </div>
       <p id="sum-date" class="note"></p>
+      <div id="sum-map-wrap" class="sum-map-wrap" hidden>
+        <div id="sum-map" class="sum-map"></div>
+        <div class="speed-legend">
+          <span>langsam</span><span class="speed-legend-bar"></span><span>schnell</span>
+        </div>
+      </div>
       <div class="stats-grid">
         <div class="stat-tile"><span>Strecke</span><b id="sum-distance">–</b></div>
         <div class="stat-tile"><span>Fahrzeit</span><b id="sum-moving">–</b></div>
@@ -232,6 +239,19 @@
         <div class="lean-side"><span>Rechts</span><b id="sum-lean-right">–</b></div>
       </div>
       <p class="note">Berechnet aus Tempo und Kurvenradius – ein Richtwert, keine Messung.</p>
+      <button id="summary-delete" class="btn btn-secondary setting-btn summary-delete">Aufnahme löschen</button>
+    </div>
+  </div>
+
+  <div id="rides-sheet" class="sheet-backdrop" hidden>
+    <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="rides-title">
+      <div class="sheet-head">
+        <h2 id="rides-title">Fahrtenbuch</h2>
+        <button id="rides-close" class="sheet-close">Fertig</button>
+      </div>
+      <p id="rides-empty" class="note">Noch keine Aufnahmen.</p>
+      <ul id="rides-list" class="rides-list"></ul>
+      <p class="sheet-foot">Gespeichert nur auf diesem Gerät · bis zu 50 Aufnahmen</p>
     </div>
   </div>
 
