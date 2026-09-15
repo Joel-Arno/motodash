@@ -11,15 +11,17 @@ import { Navigation, maneuverIcon, maneuverShort, maneuverTitle } from './naviga
 import { setMuted, speak, unlockVoice, voiceSupported } from './voice.js?v=1.4';
 import { RideStats } from './ride-stats.js?v=1.5';
 import { describeWeather, fetchWeather, rainSummary } from './weather.js?v=1.5';
-import * as spotify from './spotify.js?v=1.5.1';
+import * as spotify from './spotify.js?v=1.5.2';
 
-const APP_VERSION = '1.5.1';
+const APP_VERSION = '1.5.2';
 const WEATHER_REFRESH_MS = 10 * 60 * 1000;
 const WEATHER_MOVE_METERS = 10000; // nach so viel Strecke neu abfragen
 const MUSIC_POLL_MS = 5000;
 const MUSIC_KEEP_PAUSED_MS = 15 * 60 * 1000; // pausierte Musik bleibt so lange sichtbar, damit man weiterspielen kann
 const MIN_RIDE_METERS = 200; // kürzere „Fahrten“ bekommen keine Auswertung
 const LAST_RIDE_KEY = 'motodash.lastRide';
+const MUTED_PAUSE_KEY = 'motodash.mutedPause';
+const MUTED_PAUSE_MAX_MS = 30 * 60 * 1000; // danach richtig pausieren – spart Datenvolumen
 const ARRIVAL_METERS = 30;
 const REROUTE_COOLDOWN_MS = 8000; // höchstens so oft neu berechnen
 const REROUTE_SPEECH_GAP_MS = 60000; // „Route wird neu berechnet“ nicht ständig wiederholen
@@ -102,7 +104,17 @@ const routeState = {
 const clockFormat = new Intl.DateTimeFormat('de-DE', { hour: '2-digit', minute: '2-digit' });
 
 const weatherState = { data: null, loading: false, failedAt: 0 };
-const music = { playback: null, lastPlayingAt: 0, deviceId: null, timer: 0, polling: false };
+// muted: laufende „Stumm-Pause“ (Spotify spielt lautlos weiter, damit iOS es nicht einschlafen lässt)
+const music = {
+  playback: null,
+  lastPlayingAt: 0,
+  deviceId: null,
+  volumeSupported: null,
+  muted: loadMutedPause(),
+  timer: 0,
+  polling: false,
+  busy: false,
+};
 
 let map;
 let marker;
@@ -243,9 +255,11 @@ function init() {
     });
   }
   $('music-toggle').addEventListener('click', toggleMusic);
-  $('music-next').addEventListener('click', () => musicCommand(spotify.nextTrack));
-  $('music-prev').addEventListener('click', () => musicCommand(spotify.previousTrack));
+  $('music-next').addEventListener('click', () => musicCommand(() => skipMusic(spotify.nextTrack)));
+  $('music-prev').addEventListener('click', () => musicCommand(() => skipMusic(spotify.previousTrack)));
   handleSpotifyReturn();
+  // App wurde während einer Stumm-Pause geschlossen → Lautstärke zurückholen.
+  if (music.muted && spotify.isConnected()) endMutedPause();
 
   $('settings-close').addEventListener('click', () => ($('settings').hidden = true));
   $('settings').addEventListener('click', (e) => {
@@ -305,6 +319,7 @@ function start(mode) {
 function stop() {
   const summary = rideStats?.summary();
   rideStats = null;
+  endMutedPause();
   stopMusicPolling();
   weatherState.data = null;
   renderWeather();
@@ -946,6 +961,7 @@ function tick() {
   $('clock').textContent = clockFormat.format(new Date());
   renderWeather();
   $('app').classList.toggle('has-dock', !$('route-info').hidden || !$('music-bar').hidden);
+  if (music.muted && Date.now() - music.muted.pausedAt > MUTED_PAUSE_MAX_MS) endMutedPause();
   if (state.mode === 'live' && state.lastFixAt && Date.now() - state.lastFixAt > GPS_STALE_MS) {
     setChip('gps', 'bad', 'GPS-Signal schwach');
     $('speed').textContent = '–';
@@ -1086,9 +1102,15 @@ async function pollMusic() {
   try {
     const playback = await spotify.getPlayback();
     if (playback) {
-      music.playback = playback;
-      if (playback.isPlaying) music.lastPlayingAt = Date.now();
+      music.volumeSupported = playback.supportsVolume;
       if (playback.deviceId) music.deviceId = playback.deviceId;
+      if (music.muted) {
+        // Spotify spielt lautlos weiter (evtl. schon den nächsten Titel) – angezeigt bleibt der pausierte.
+        music.playback = { ...music.muted.display, isPlaying: false };
+      } else {
+        music.playback = playback;
+        if (playback.isPlaying) music.lastPlayingAt = Date.now();
+      }
     } else if (music.playback) {
       // Pausiert lässt iOS Spotify im Hintergrund schnell „einschlafen“ – dann meldet Spotify gar nichts mehr.
       // Letzten Titel als pausiert weiter anzeigen, damit man wieder starten kann.
@@ -1106,7 +1128,9 @@ async function pollMusic() {
 function renderMusic() {
   const playback = music.playback;
   const visible = Boolean(
-    state.mode && playback && (playback.isPlaying || Date.now() - music.lastPlayingAt < MUSIC_KEEP_PAUSED_MS),
+    state.mode &&
+      playback &&
+      (playback.isPlaying || music.muted || Date.now() - music.lastPlayingAt < MUSIC_KEEP_PAUSED_MS),
   );
   $('music-bar').hidden = !visible;
   if (!visible) return;
@@ -1122,25 +1146,122 @@ function renderMusic() {
 
 async function toggleMusic() {
   const playback = music.playback;
-  if (!playback) return;
+  if (!playback || music.busy) return;
+  music.busy = true;
   const wasPlaying = playback.isPlaying;
   playback.isPlaying = !wasPlaying; // sofort anzeigen, Spotify braucht etwa eine Sekunde
   music.lastPlayingAt = Date.now();
   renderMusic();
-  const ok = await musicCommand(wasPlaying ? spotify.pause : resumeMusic);
+  const ok = await musicCommand(wasPlaying ? pauseMusic : resumeMusic);
   if (!ok && music.playback) {
     music.playback.isPlaying = wasPlaying;
     renderMusic();
   }
+  music.busy = false;
 }
 
-/** Weiterspielen – ist Spotify eingeschlafen, gezielt das zuletzt genutzte Gerät ansprechen. */
+/**
+ * Pause: Wenn das Gerät es erlaubt, Spotify nur stumm schalten und die Stelle merken.
+ * So läuft Spotify weiter und iOS lässt es nicht einschlafen – „Play“ klappt dann auch nach längerer Pause.
+ */
+async function pauseMusic() {
+  const current = await spotify.getPlayback();
+  if (current?.isPlaying && current.supportsVolume && current.deviceId) {
+    const positionMs = current.progressMs + (Date.now() - current.fetchedAt);
+    try {
+      await spotify.setVolume(0, current.deviceId);
+      music.muted = {
+        trackUri: current.trackUri,
+        contextUri: current.contextUri,
+        positionMs,
+        volume: current.volume > 0 ? current.volume : 60,
+        deviceId: current.deviceId,
+        pausedAt: Date.now(),
+        display: { title: current.title, artist: current.artist, cover: current.cover },
+      };
+      saveMutedPause();
+      return;
+    } catch (err) {
+      if (err.code !== 'no-volume' && err.code !== 'restricted') throw err;
+      music.volumeSupported = false; // dann eben richtig pausieren
+    }
+  }
+  await spotify.pause();
+}
+
+/** Weiterspielen – nach einer Stumm-Pause an der gemerkten Stelle, sonst normal (ggf. eingeschlafenes Gerät wecken). */
 async function resumeMusic() {
+  const muted = music.muted;
+  if (muted) {
+    try {
+      const current = await spotify.getPlayback().catch(() => null);
+      if (current?.trackUri === muted.trackUri) {
+        await spotify.seek(muted.positionMs, muted.deviceId);
+        if (!current.isPlaying) await spotify.play(muted.deviceId);
+      } else {
+        await spotify.playAt(muted); // Titel lief inzwischen weiter – neu an der gemerkten Stelle starten
+      }
+      await spotify.setVolume(muted.volume, muted.deviceId);
+    } catch (err) {
+      await spotify.setVolume(muted.volume, muted.deviceId).catch(() => {});
+      throw err;
+    } finally {
+      clearMutedPause();
+    }
+    return;
+  }
+
   try {
     await spotify.play();
   } catch (err) {
     if (err.code !== 'no-device' || !music.deviceId) throw err;
     await spotify.play(music.deviceId);
+  }
+}
+
+/** Weiter/Zurück: während einer Stumm-Pause danach wieder laut stellen. */
+async function skipMusic(command) {
+  const muted = music.muted;
+  await command();
+  if (!muted) return;
+  clearMutedPause();
+  music.lastPlayingAt = Date.now();
+  await spotify.setVolume(muted.volume, muted.deviceId);
+}
+
+/** Stumm-Pause in eine echte Pause umwandeln und die Lautstärke zurückstellen. */
+async function endMutedPause() {
+  const muted = music.muted;
+  if (!muted) return;
+  clearMutedPause();
+  await spotify.pause().catch(() => {});
+  await spotify.setVolume(muted.volume, muted.deviceId).catch(() => {});
+  if (music.playback) music.playback = { ...music.playback, isPlaying: false };
+  renderMusic();
+}
+
+function loadMutedPause() {
+  try {
+    return JSON.parse(localStorage.getItem(MUTED_PAUSE_KEY));
+  } catch {
+    return null;
+  }
+}
+
+function saveMutedPause() {
+  try {
+    localStorage.setItem(MUTED_PAUSE_KEY, JSON.stringify(music.muted));
+  } catch {
+    // ohne Speicher gilt die Stumm-Pause nur, solange die App offen ist
+  }
+}
+
+function clearMutedPause() {
+  music.muted = null;
+  try {
+    localStorage.removeItem(MUTED_PAUSE_KEY);
+  } catch {
+    // nichts zu tun
   }
 }
 
@@ -1171,8 +1292,14 @@ async function handleSpotifyReturn() {
 
 function renderSpotifySetting(message) {
   const connected = spotify.isConnected();
+  const pauseInfo =
+    music.volumeSupported === true
+      ? ' Pause schaltet stumm und läuft im Hintergrund weiter – so schläft Spotify nicht ein.'
+      : music.volumeSupported === false
+        ? ' Dein Gerät erlaubt Spotify keine Lautstärke-Steuerung – Pause ist deshalb eine normale Pause.'
+        : '';
   $('spotify-hint').textContent = connected
-    ? 'Verbunden. Während der Fahrt erscheint unten auf der Karte eine Musik-Leiste, sobald Spotify spielt.'
+    ? `Verbunden. Während der Fahrt erscheint unten auf der Karte eine Musik-Leiste, sobald Spotify spielt.${pauseInfo}`
     : 'Steuert deine Spotify-Wiedergabe (Spotify Premium nötig). Einmalig eine eigene Spotify-App anlegen und die Client-ID hier eintragen.';
   $('spotify-client').hidden = connected;
   if (!$('spotify-client-id').value) $('spotify-client-id').value = spotify.getClientId();

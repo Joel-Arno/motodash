@@ -11,7 +11,7 @@ const STORE_KEY = 'motodash.spotify';
 const DEFAULT_CLIENT_ID = '';
 
 export class SpotifyError extends Error {
-  /** @param {'not-connected'|'auth'|'premium'|'no-device'|'restricted'|'rate-limit'|'network'|'http'} code */
+  /** @param {'not-connected'|'auth'|'premium'|'no-device'|'no-volume'|'restricted'|'rate-limit'|'network'|'http'} code */
   constructor(code, message) {
     super(message);
     this.code = code;
@@ -95,33 +95,64 @@ export async function getPlayback() {
   const images = item.album?.images ?? item.images ?? [];
   const cover = images.find((image) => image.width && image.width <= 320) ?? images[0];
   return {
+    fetchedAt: Date.now(),
     isPlaying: Boolean(data.is_playing),
     title: item.name,
     artist: (item.artists ?? []).map((artist) => artist.name).join(', ') || item.show?.name || '',
     cover: cover?.url ?? null,
+    trackUri: item.uri,
+    contextUri: data.context?.uri ?? null,
+    progressMs: data.progress_ms ?? 0,
     deviceId: data.device?.id ?? null,
+    volume: data.device?.volume_percent ?? null,
+    supportsVolume: Boolean(data.device?.supports_volume),
   };
 }
 
+const withDevice = (path, deviceId) =>
+  deviceId ? `${path}${path.includes('?') ? '&' : '?'}device_id=${encodeURIComponent(deviceId)}` : path;
+
 /** @param deviceId optional: gezielt dieses Gerät ansprechen (weckt ein eingeschlafenes Spotify eher auf) */
-export const play = (deviceId) =>
-  api('PUT', `/me/player/play${deviceId ? `?device_id=${encodeURIComponent(deviceId)}` : ''}`);
+export const play = (deviceId) => api('PUT', withDevice('/me/player/play', deviceId));
 export const pause = () => api('PUT', '/me/player/pause');
 export const nextTrack = () => api('POST', '/me/player/next');
 export const previousTrack = () => api('POST', '/me/player/previous');
+export const setVolume = (percent, deviceId) =>
+  api('PUT', withDevice(`/me/player/volume?volume_percent=${Math.round(percent)}`, deviceId));
+export const seek = (positionMs, deviceId) =>
+  api('PUT', withDevice(`/me/player/seek?position_ms=${Math.max(0, Math.round(positionMs))}`, deviceId));
 
-async function api(method, path, retry = true) {
+/** Einen bestimmten Titel an einer Stelle starten – wenn möglich innerhalb seiner Playlist/seines Albums. */
+export async function playAt({ trackUri, contextUri, positionMs, deviceId }) {
+  const path = withDevice('/me/player/play', deviceId);
+  const position_ms = Math.max(0, Math.round(positionMs));
+  if (contextUri) {
+    try {
+      return await api('PUT', path, { body: { context_uri: contextUri, offset: { uri: trackUri }, position_ms } });
+    } catch (err) {
+      if (err.code === 'network' || err.code === 'no-device') throw err;
+      // Manche Listen (z. B. „Lieblingssongs“) lassen sich so nicht starten – dann nur den Titel.
+    }
+  }
+  return api('PUT', path, { body: { uris: [trackUri], position_ms } });
+}
+
+async function api(method, path, { body } = {}, retry = true) {
   const token = await accessToken();
   let response;
   try {
-    response = await fetch(`${API_URL}${path}`, { method, headers: { Authorization: `Bearer ${token}` } });
+    response = await fetch(`${API_URL}${path}`, {
+      method,
+      headers: { Authorization: `Bearer ${token}`, ...(body && { 'Content-Type': 'application/json' }) },
+      ...(body && { body: JSON.stringify(body) }),
+    });
   } catch {
     throw new SpotifyError('network', 'Keine Verbindung zu Spotify.');
   }
 
   if (response.status === 401 && retry) {
     store.expiresAt = 0; // Token abgelaufen – erneuern und nochmal
-    return api(method, path, false);
+    return api(method, path, { body }, false);
   }
   const text = await response.text();
   const data = parseJson(text);
@@ -133,6 +164,7 @@ async function api(method, path, retry = true) {
   }
   if (response.status === 403) {
     if (data?.error?.reason === 'PREMIUM_REQUIRED') throw new SpotifyError('premium', 'Spotify erlaubt das nur mit Premium.');
+    if (data?.error?.reason === 'VOLUME_CONTROL_DISALLOW') throw new SpotifyError('no-volume', 'Lautstärke lässt sich nicht steuern.');
     // z. B. „schon pausiert“ oder „kein vorheriger Titel“ – kein echter Fehler
     throw new SpotifyError('restricted', data?.error?.message ?? 'Spotify lässt das gerade nicht zu.');
   }
