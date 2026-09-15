@@ -1,7 +1,11 @@
 import * as maplibregl from 'https://cdn.jsdelivr.net/npm/maplibre-gl@6.9.1/dist/maplibre-gl.mjs';
-import { buildStyle } from './map-style.js';
-import { DemoRide } from './demo.js';
-import { angleDiff, bearing, distance } from './geo.js';
+// Die ?v=… Anhänge sorgen dafür, dass das iPhone nach einem Update die neuen Dateien lädt.
+// Bei jeder Änderung APP_VERSION und alle ?v= (hier, in demo.js und index.html) gemeinsam erhöhen.
+import { buildStyle } from './map-style.js?v=1.1';
+import { DemoRide } from './demo.js?v=1.1';
+import { angleDiff, bearing, distance } from './geo.js?v=1.1';
+
+const APP_VERSION = '1.1';
 
 const $ = (id) => document.getElementById(id);
 const clamp = (v, min, max) => Math.min(max, Math.max(min, v));
@@ -11,6 +15,7 @@ const ICONS = {
   heading: '<svg class="i" viewBox="0 0 24 24"><path d="M12 3l7 18-7-4-7 4z"/></svg>',
   north: '<svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.5 15.5v-7l5 7v-7"/></svg>',
   night: '<svg class="i" viewBox="0 0 24 24"><path d="M20 14.5A8.5 8.5 0 1 1 9.5 4 6.5 6.5 0 0 0 20 14.5z"/></svg>',
+  settings: '<svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>',
   day: '<svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>',
 };
 
@@ -27,6 +32,10 @@ const state = {
   lastFix: null,
   lastFixAt: 0,
   easingUntil: 0, // solange läuft eine Kamera-Animation, die nicht überschrieben werden soll
+  touching: false, // Finger auf der Karte – Kamera pausiert, sonst bricht MapLibre die Geste ab
+  pinched: false, // während der aktuellen Berührung lagen zwei Finger auf der Karte
+  userZooming: false, // Mausrad/Doppeltipp-Zoom läuft
+  dragCancelAt: 0,
   watchId: null,
   demo: null,
 };
@@ -47,7 +56,9 @@ init();
 
 function init() {
   applyTheme();
+  applyLayout();
   renderButtons();
+  document.querySelectorAll('.app-version').forEach((el) => (el.textContent = APP_VERSION));
   tick();
   setInterval(tick, 1000);
   showInstallHint();
@@ -74,11 +85,22 @@ function init() {
   map.touchZoomRotate.disableRotation();
   marker = new maplibregl.Marker({ element: markerEl, rotationAlignment: 'map', pitchAlignment: 'map' });
 
-  const stopFollowing = (e) => {
-    if (e.originalEvent && state.mode) setFollow(false);
-  };
-  map.on('dragstart', stopFollowing);
-  map.on('zoomstart', stopFollowing);
+  const container = map.getContainer();
+  container.addEventListener('touchstart', onMapTouch, { passive: true });
+  container.addEventListener('touchend', onMapTouch, { passive: true });
+  container.addEventListener('touchcancel', onMapTouch, { passive: true });
+  // iOS soll nicht die ganze Seite zoomen, wenn zwei Finger auf dem Bildschirm liegen.
+  document.addEventListener('gesturestart', (e) => e.preventDefault());
+
+  map.on('dragstart', onUserDrag);
+  map.on('zoomstart', (e) => {
+    if (e.originalEvent && !state.touching && state.follow) state.userZooming = true;
+  });
+  map.on('zoomend', () => {
+    if (!state.userZooming) return;
+    state.userZooming = false;
+    keepZoomAndReturn();
+  });
   map.on('resize', () => {
     if (state.follow && view.lng != null) map.jumpTo(cameraFor());
   });
@@ -104,6 +126,19 @@ function init() {
     applyTheme();
     renderButtons();
     map.setStyle(buildStyle(settings.theme));
+  });
+
+  $('btn-settings').addEventListener('click', () => ($('settings').hidden = false));
+  $('settings-close').addEventListener('click', () => ($('settings').hidden = true));
+  $('settings').addEventListener('click', (e) => {
+    if (e.target === e.currentTarget) $('settings').hidden = true;
+  });
+  document.querySelectorAll('[data-cockpit-option]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      settings.cockpit = btn.dataset.cockpitOption;
+      saveSettings();
+      applyLayout();
+    });
   });
 
   document.addEventListener('visibilitychange', () => {
@@ -295,12 +330,57 @@ function render(now) {
   marker.setLngLat([view.lng, view.lat]);
   marker.setRotation(view.heading ?? 0);
   markerEl.classList.toggle('has-heading', view.heading != null);
-  if (state.follow && now >= state.easingUntil) map.jumpTo(cameraFor());
+  const userIsGesturing = state.touching || state.userZooming;
+  if (state.follow && !userIsGesturing && now >= state.easingUntil) map.jumpTo(cameraFor());
 }
 
 function setFollow(follow) {
   state.follow = follow;
   $('btn-recenter').hidden = follow || view.lng == null;
+  // Beim Mitfahren um die eigene Position zoomen, beim freien Umschauen um die Finger.
+  const around = follow ? { around: 'center' } : true;
+  map?.touchZoomRotate.enable(around);
+  map?.scrollZoom.enable(around);
+}
+
+// ---------- Gesten ----------
+
+function onMapTouch(e) {
+  const fingers = e.touches.length;
+  state.touching = fingers > 0;
+
+  if (fingers >= 2 && !state.pinched) {
+    state.pinched = true;
+    // Der erste Finger hat das Mitfahren kurz beendet, aber eigentlich wollte man zoomen.
+    if (!state.follow && state.mode && performance.now() - state.dragCancelAt < 600) setFollow(true);
+  }
+
+  if (fingers === 0) {
+    const wasPinch = state.pinched;
+    state.pinched = false;
+    if (wasPinch) keepZoomAndReturn();
+    else if (state.follow) returnToRider(250);
+  }
+}
+
+function onUserDrag(e) {
+  if (!e.originalEvent || !state.mode) return;
+  if (state.pinched || e.originalEvent.touches?.length >= 2) return;
+  setFollow(false);
+  state.dragCancelAt = performance.now();
+}
+
+/** Gezoomte Stufe übernehmen und weiter mitfahren. */
+function keepZoomAndReturn() {
+  if (!state.follow || view.lng == null) return;
+  state.zoomOffset = clamp(map.getZoom() - view.zoom, -8, 4);
+  returnToRider(300);
+}
+
+function returnToRider(duration) {
+  if (view.lng == null) return;
+  state.easingUntil = performance.now() + duration + 50;
+  map.easeTo({ ...cameraFor(), duration, essential: true });
 }
 
 function recenter() {
@@ -325,19 +405,19 @@ function zoomBy(delta) {
 async function requestWakeLock() {
   wake.wanted = true;
   if (!('wakeLock' in navigator)) {
-    setChip('display', 'warn', 'Auto-Sperre beachten');
+    setChip('display', 'warn', 'Display: Auto-Sperre');
     return;
   }
   try {
     const lock = await navigator.wakeLock.request('screen');
     wake.lock = lock;
-    setChip('display', 'ok', 'Bildschirm bleibt an');
+    setChip('display', 'ok', 'Display an');
     lock.addEventListener('release', () => {
       if (wake.lock === lock) wake.lock = null;
-      if (wake.wanted) setChip('display', 'warn', 'Bildschirm-Sperre · tippen');
+      if (wake.wanted) setChip('display', 'warn', 'Display · tippen');
     });
   } catch {
-    setChip('display', 'warn', 'Bildschirm-Sperre · tippen');
+    setChip('display', 'warn', 'Display · tippen');
   }
 }
 
@@ -345,7 +425,7 @@ function releaseWakeLock() {
   wake.wanted = false;
   wake.lock?.release();
   wake.lock = null;
-  setChip('display', 'off', 'Bildschirm');
+  setChip('display', 'off', 'Display');
 }
 
 // ---------- Oberfläche ----------
@@ -376,6 +456,15 @@ function renderButtons() {
   const night = settings.theme === 'night';
   $('btn-view').innerHTML = `${headingUp ? ICONS.heading : ICONS.north}<span>${headingUp ? 'Fahrtrichtung' : 'Norden oben'}</span>`;
   $('btn-theme').innerHTML = `${night ? ICONS.night : ICONS.day}<span>${night ? 'Nacht' : 'Tag'}</span>`;
+  $('btn-settings').innerHTML = `${ICONS.settings}<span>Einstellungen</span>`;
+}
+
+/** Cockpit-Seite im Querformat (links/rechts). */
+function applyLayout() {
+  document.documentElement.dataset.cockpit = settings.cockpit;
+  document.querySelectorAll('[data-cockpit-option]').forEach((btn) => {
+    btn.setAttribute('aria-checked', String(btn.dataset.cockpitOption === settings.cockpit));
+  });
 }
 
 function applyTheme() {
@@ -401,7 +490,7 @@ function hideStartError() {
 }
 
 function loadSettings() {
-  const defaults = { theme: 'night', view: 'heading' };
+  const defaults = { theme: 'night', view: 'heading', cockpit: 'right' };
   try {
     return { ...defaults, ...JSON.parse(localStorage.getItem(SETTINGS_KEY)) };
   } catch {
