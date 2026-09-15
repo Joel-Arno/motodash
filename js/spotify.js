@@ -106,6 +106,7 @@ export async function getPlayback() {
     deviceId: data.device?.id ?? null,
     volume: data.device?.volume_percent ?? null,
     supportsVolume: Boolean(data.device?.supports_volume),
+    repeatState: data.repeat_state ?? 'off',
   };
 }
 
@@ -119,6 +120,9 @@ export const nextTrack = () => api('POST', '/me/player/next');
 export const previousTrack = () => api('POST', '/me/player/previous');
 export const setVolume = (percent, deviceId) =>
   api('PUT', withDevice(`/me/player/volume?volume_percent=${Math.round(percent)}`, deviceId));
+export const setRepeat = (repeatState, deviceId) =>
+  api('PUT', withDevice(`/me/player/repeat?state=${encodeURIComponent(repeatState)}`, deviceId));
+export const playUris = (uris, deviceId) => api('PUT', withDevice('/me/player/play', deviceId), { body: { uris } });
 export const seek = (positionMs, deviceId) =>
   api('PUT', withDevice(`/me/player/seek?position_ms=${Math.max(0, Math.round(positionMs))}`, deviceId));
 
