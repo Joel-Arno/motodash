@@ -105,6 +105,7 @@ svg.i {
   position: absolute;
   inset: 0;
   background: var(--bg);
+  touch-action: none;
 }
 
 #panel {
@@ -120,12 +121,13 @@ svg.i {
   border-top: 1px solid var(--line);
 }
 
-/* ---------- Querformat = Cockpit links, Karte rechts (wie CarPlay) ---------- */
+/* ---------- Querformat = Cockpit seitlich (wie CarPlay), Seite einstellbar ---------- */
 
 @media (orientation: landscape) {
   #app {
+    --panel-w: clamp(240px, 32vw, 340px);
     grid-template-rows: minmax(0, 1fr);
-    grid-template-columns: clamp(220px, 30vw, 320px) minmax(0, 1fr);
+    grid-template-columns: var(--panel-w) minmax(0, 1fr);
   }
 
   #panel {
@@ -146,6 +148,21 @@ svg.i {
   #map-wrap {
     grid-column: 2;
     grid-row: 1;
+  }
+
+  :root[data-cockpit="right"] #app {
+    grid-template-columns: minmax(0, 1fr) var(--panel-w);
+  }
+
+  :root[data-cockpit="right"] #panel {
+    grid-column: 2;
+    padding: max(14px, var(--safe-top)) max(16px, var(--safe-right)) max(14px, var(--safe-bottom)) 16px;
+    border-right: 0;
+    border-left: 1px solid var(--line);
+  }
+
+  :root[data-cockpit="right"] #map-wrap {
+    grid-column: 1;
   }
 }
 
@@ -188,6 +205,14 @@ svg.i {
   align-items: flex-end;
   gap: 6px;
   min-width: 0;
+}
+
+.time-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: baseline;
+  gap: 6px 12px;
 }
 
 .clock {
@@ -255,6 +280,7 @@ svg.i {
     padding-top: 10px;
   }
 
+  .time-row,
   .chips {
     justify-content: flex-start;
   }
@@ -265,9 +291,29 @@ svg.i {
 .actions {
   grid-area: actions;
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, 1fr);
   gap: 10px;
   width: 100%;
+}
+
+/* Im Querformat ist das Cockpit schmal: Einstellungen als eigene Zeile darunter. */
+@media (orientation: landscape) {
+  .actions {
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  .actions .action-settings {
+    grid-column: 1 / -1;
+    min-height: 48px;
+    flex-direction: row;
+    gap: 8px;
+  }
+
+  .actions .action-settings svg {
+    width: 22px;
+    height: 22px;
+  }
 }
 
 .action {
@@ -358,9 +404,28 @@ svg.i {
   height: 18px;
 }
 
+/* Querformat: Zoom-Knöpfe neben dem Cockpit, Demo-Hinweis auf der anderen Seite. */
 @media (orientation: landscape) {
   .badge {
     top: 12px;
+  }
+
+  :root[data-cockpit="left"] .fabs {
+    right: auto;
+    left: 12px;
+  }
+
+  :root[data-cockpit="left"] .badge {
+    left: auto;
+    right: max(12px, var(--safe-right));
+  }
+
+  :root[data-cockpit="right"] .fabs {
+    right: 12px;
+  }
+
+  :root[data-cockpit="right"] .badge {
+    left: max(12px, var(--safe-left));
   }
 }
 
@@ -412,6 +477,116 @@ svg.i {
 
 :root:not([data-theme="day"]) .maplibregl-ctrl-attrib-button {
   filter: invert(1);
+}
+
+/* ---------- Einstellungen ---------- */
+
+.sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  overflow-y: auto;
+  padding: calc(16px + var(--safe-top)) max(16px, var(--safe-right)) calc(16px + var(--safe-bottom)) max(16px, var(--safe-left));
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.sheet {
+  width: min(440px, 100%);
+  margin: auto;
+  padding: 18px;
+  border-radius: 22px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+}
+
+.sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.sheet-head h2 {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 800;
+}
+
+.sheet-close {
+  min-height: 48px;
+  padding: 0 20px;
+  border-radius: 14px;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.setting {
+  padding: 14px;
+  border-radius: 16px;
+  background: var(--panel-2);
+}
+
+.setting-title {
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.setting-hint {
+  margin: 2px 0 12px;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.segmented {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.segmented button {
+  min-height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border-radius: 14px;
+  background: var(--panel);
+  border: 2px solid var(--line);
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.segmented button[aria-checked="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.segmented svg {
+  width: 36px;
+  height: 22px;
+}
+
+.segmented svg rect {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+}
+
+.segmented svg rect.fill {
+  fill: currentColor;
+  stroke: none;
+}
+
+.sheet-foot {
+  margin: 14px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+  text-align: center;
 }
 
 /* ---------- Startbildschirm ---------- */
@@ -504,6 +679,13 @@ svg.i {
   width: 20px;
   height: 20px;
   color: var(--warn);
+}
+
+.version-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+  opacity: 0.7;
 }
 
 .error {
