@@ -122,9 +122,6 @@ export const setVolume = (percent, deviceId) =>
   api('PUT', withDevice(`/me/player/volume?volume_percent=${Math.round(percent)}`, deviceId));
 export const setRepeat = (repeatState, deviceId) =>
   api('PUT', withDevice(`/me/player/repeat?state=${encodeURIComponent(repeatState)}`, deviceId));
-export const playUris = (uris, deviceId) => api('PUT', withDevice('/me/player/play', deviceId), { body: { uris } });
-export const seek = (positionMs, deviceId) =>
-  api('PUT', withDevice(`/me/player/seek?position_ms=${Math.max(0, Math.round(positionMs))}`, deviceId));
 
 /** Einen bestimmten Titel an einer Stelle starten – wenn möglich innerhalb seiner Playlist/seines Albums. */
 export async function playAt({ trackUri, contextUri, positionMs, deviceId }) {

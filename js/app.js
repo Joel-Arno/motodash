@@ -9,22 +9,21 @@ import { fetchRoutes, fetchSpeedLimits } from './routing.js?v=1.4';
 import { findRoundTrips } from './tours.js?v=1.4';
 import { Navigation, maneuverIcon, maneuverShort, maneuverTitle } from './navigation.js?v=1.4';
 import { setMuted, speak, unlockVoice, voiceSupported } from './voice.js?v=1.4';
-import { RideStats } from './ride-stats.js?v=1.5';
+import { RideStats } from './ride-stats.js?v=1.6';
+import { deleteRide, loadRides, migrateLegacyRide, saveRide, trackGeoJSON } from './rides.js?v=1.6';
 import { describeWeather, fetchWeather, rainSummary } from './weather.js?v=1.5';
-import * as spotify from './spotify.js?v=1.5.3';
+import * as spotify from './spotify.js?v=1.6';
 
-const APP_VERSION = '1.5.3';
+const APP_VERSION = '1.6';
 const WEATHER_REFRESH_MS = 10 * 60 * 1000;
 const WEATHER_MOVE_METERS = 10000; // nach so viel Strecke neu abfragen
 const MUSIC_POLL_MS = 5000;
 const MUSIC_KEEP_PAUSED_MS = 15 * 60 * 1000; // pausierte Musik bleibt so lange sichtbar, damit man weiterspielen kann
-const MIN_RIDE_METERS = 200; // kürzere „Fahrten“ bekommen keine Auswertung
-const LAST_RIDE_KEY = 'motodash.lastRide';
-const MUTED_PAUSE_KEY = 'motodash.mutedPause';
-const MUTED_PAUSE_MAX_MS = 30 * 60 * 1000; // danach richtig pausieren – spart Akku und Datenvolumen
-// Stummer Spotify-Titel („Silence 1 Minute“ von Silent Meditation, No Sound Pause Breaks).
-// Läuft während der Pause in Dauerschleife, damit iOS Spotify nicht einschlafen lässt.
-const SILENT_TRACK_URI = 'spotify:track:6ZfRjAcExubAvJFOkZfGtI';
+const MIN_RIDE_METERS = 200; // kürzere Aufnahmen werden nicht gespeichert
+// Aus Version 1.5.2/1.5.3: dort merkte sich die App eine „Stumm-Pause“ – falls noch vorhanden, aufräumen.
+const LEGACY_MUTED_PAUSE_KEY = 'motodash.mutedPause';
+// Farbverlauf der aufgezeichneten Linie nach Tempo (km/h → Farbe)
+const TRACK_SPEED_COLORS = [0, '#3ddc84', 50, '#ffd24d', 100, '#ff7a1a', 140, '#ff3b3b'];
 const ARRIVAL_METERS = 30;
 const REROUTE_COOLDOWN_MS = 8000; // höchstens so oft neu berechnen
 const REROUTE_SPEECH_GAP_MS = 60000; // „Route wird neu berechnet“ nicht ständig wiederholen
@@ -107,23 +106,15 @@ const routeState = {
 const clockFormat = new Intl.DateTimeFormat('de-DE', { hour: '2-digit', minute: '2-digit' });
 
 const weatherState = { data: null, loading: false, failedAt: 0 };
-// muted: laufende „Stumm-Pause“ – Spotify spielt weiter, damit iOS es nicht einschlafen lässt:
-// method 'volume' = Lautstärke 0 (wenn das Gerät es erlaubt), 'silence' = stummer Titel in Dauerschleife
-const music = {
-  playback: null,
-  lastPlayingAt: 0,
-  deviceId: null,
-  volumeSupported: null,
-  muted: loadMutedPause(),
-  timer: 0,
-  polling: false,
-  busy: false,
-};
+const music = { playback: null, lastPlayingAt: 0, deviceId: null, timer: 0, polling: false, busy: false };
 
 let map;
 let marker;
 let planner;
-let rideStats = null;
+// Laufende Aufnahme: { stats, source: 'manual' | 'route', title }
+let recording = null;
+let summaryMap = null; // Karte in der Auswertung
+let summaryRide = null; // gerade angezeigte Aufnahme
 const markerEl = document.createElement('div');
 markerEl.className = 'rider';
 markerEl.innerHTML = '<svg viewBox="0 0 48 48"><path d="M24 5 L40 42 L24 33 L8 42 Z"/></svg>';
@@ -246,24 +237,30 @@ function init() {
     $('settings').hidden = true;
     stop();
   });
-  $('ride-last').addEventListener('click', () => {
+  $('ride-log').addEventListener('click', () => {
     $('settings').hidden = true;
-    showRideSummary(loadLastRide());
+    openRideLog();
   });
-  $('summary-close').addEventListener('click', () => ($('ride-summary').hidden = true));
+  $('btn-record').addEventListener('click', onRecordTap);
+  $('summary-close').addEventListener('click', closeRideSummary);
+  $('summary-delete').addEventListener('click', onDeleteRideTap);
+  $('rides-close').addEventListener('click', () => ($('rides-sheet').hidden = true));
+  migrateLegacyRide();
   $('weather').addEventListener('click', openWeatherSheet);
   $('weather-close').addEventListener('click', () => ($('weather-sheet').hidden = true));
-  for (const id of ['weather-sheet', 'ride-summary']) {
+  for (const id of ['weather-sheet', 'rides-sheet']) {
     $(id).addEventListener('click', (e) => {
       if (e.target === e.currentTarget) $(id).hidden = true;
     });
   }
+  $('ride-summary').addEventListener('click', (e) => {
+    if (e.target === e.currentTarget) closeRideSummary();
+  });
   $('music-toggle').addEventListener('click', toggleMusic);
-  $('music-next').addEventListener('click', () => musicCommand(() => skipMusic('next')));
-  $('music-prev').addEventListener('click', () => musicCommand(() => skipMusic('previous')));
+  $('music-next').addEventListener('click', () => musicCommand(spotify.nextTrack));
+  $('music-prev').addEventListener('click', () => musicCommand(spotify.previousTrack));
   handleSpotifyReturn();
-  // App wurde während einer Stumm-Pause geschlossen → Lautstärke zurückholen.
-  if (music.muted && spotify.isConnected()) endMutedPause();
+  cleanUpLegacyMutedPause();
 
   $('settings-close').addEventListener('click', () => ($('settings').hidden = true));
   $('settings').addEventListener('click', (e) => {
@@ -304,7 +301,7 @@ function start(mode) {
   requestWakeLock();
   unlockVoice(); // passiert im Tipp auf „Losfahren“ – danach darf iOS jederzeit sprechen
   setTimeout(collapseAttribution, 8000);
-  rideStats = new RideStats();
+  renderRecordButton();
   startMusicPolling();
 
   if (mode === 'live') {
@@ -321,9 +318,7 @@ function start(mode) {
 }
 
 function stop() {
-  const summary = rideStats?.summary();
-  rideStats = null;
-  endMutedPause();
+  finishRecording(); // läuft noch eine Aufnahme → speichern und Auswertung zeigen
   stopMusicPolling();
   weatherState.data = null;
   renderWeather();
@@ -353,11 +348,7 @@ function stop() {
   map.easeTo({ bearing: 0, pitch: 0, padding: { top: 0, bottom: 0, left: 0, right: 0 }, duration: 400 });
   $('demo-badge').hidden = true;
   $('start').hidden = false;
-
-  if (summary && summary.meters >= MIN_RIDE_METERS) {
-    saveLastRide(summary);
-    showRideSummary(summary);
-  }
+  renderRecordButton();
 }
 
 // ---------- Position ----------
@@ -393,7 +384,7 @@ function onPosition(fix) {
   if (heading != null && state.speedKmh >= 5) state.heading = heading;
   state.lastFix = fix;
   state.lastFixAt = Date.now();
-  rideStats?.add(fix, state.speedKmh);
+  recording?.stats.add(fix, state.speedKmh);
   maybeRefreshWeather();
 
   $('speed').textContent = Math.round(state.speedKmh);
@@ -632,6 +623,9 @@ function startRoute() {
   if (state.mode === 'demo') state.demo.followRoute(route.coords);
   // Im Tipp auf „Starten“ sprechen – so erlaubt iOS auch die späteren Ansagen.
   speak(routeState.nav.startAnnouncement(Boolean(routeState.tour)), { interrupt: true });
+  // Routen werden automatisch aufgenommen (außer es läuft schon eine eigene Aufnahme).
+  const destination = routeState.stops.at(-1);
+  startRecording('route', routeState.tour ? 'Rundtour' : `Route nach ${destination?.title ?? 'Ziel'}`);
   updateNavigation();
   recenter();
 }
@@ -648,6 +642,7 @@ function activateRoute(route) {
 
 /** @param keepStops true = Ziele bleiben im Planer zum Bearbeiten erhalten */
 function clearRoute({ keepStops = false } = {}) {
+  const endedActiveRoute = routeState.phase === 'active';
   Object.assign(routeState, { phase: null, routes: [], selected: 0, stops: [], nav: null, tour: null, rerouting: false });
   if (!keepStops) planner?.clearStops();
   $('route-chooser').hidden = true;
@@ -656,6 +651,8 @@ function clearRoute({ keepStops = false } = {}) {
   $('nav-banner').hidden = true;
   $('btn-voice').hidden = true;
   renderSpeedLimit(0);
+  // Aufnahme, die mit der Route gestartet wurde, endet auch mit ihr (beendet oder angekommen).
+  if (endedActiveRoute && recording?.source === 'route') finishRecording();
   if (!map) return;
   setDoneFraction(0, { force: true });
   renderRoute();
@@ -965,7 +962,7 @@ function tick() {
   $('clock').textContent = clockFormat.format(new Date());
   renderWeather();
   $('app').classList.toggle('has-dock', !$('route-info').hidden || !$('music-bar').hidden);
-  if (music.muted && Date.now() - music.muted.pausedAt > MUTED_PAUSE_MAX_MS) endMutedPause();
+  if (recording) renderRecordButton();
   if (state.mode === 'live' && state.lastFixAt && Date.now() - state.lastFixAt > GPS_STALE_MS) {
     setChip('gps', 'bad', 'GPS-Signal schwach');
     $('speed').textContent = '–';
@@ -1106,20 +1103,9 @@ async function pollMusic() {
   try {
     const playback = await spotify.getPlayback();
     if (playback) {
-      music.volumeSupported = playback.supportsVolume;
+      music.playback = playback;
+      if (playback.isPlaying) music.lastPlayingAt = Date.now();
       if (playback.deviceId) music.deviceId = playback.deviceId;
-      if (music.muted?.method === 'silence' && playback.trackUri !== SILENT_TRACK_URI) {
-        // In der Spotify-App selbst weitergespielt – die Stumm-Pause ist damit vorbei.
-        spotify.setRepeat(music.muted.repeatState, music.muted.deviceId).catch(() => {});
-        clearMutedPause();
-      }
-      if (music.muted) {
-        // Spotify spielt lautlos weiter – angezeigt bleibt der pausierte Titel.
-        music.playback = { ...music.muted.display, isPlaying: false };
-      } else {
-        music.playback = playback;
-        if (playback.isPlaying) music.lastPlayingAt = Date.now();
-      }
     } else if (music.playback) {
       // Pausiert lässt iOS Spotify im Hintergrund schnell „einschlafen“ – dann meldet Spotify gar nichts mehr.
       // Letzten Titel als pausiert weiter anzeigen, damit man wieder starten kann.
@@ -1137,9 +1123,7 @@ async function pollMusic() {
 function renderMusic() {
   const playback = music.playback;
   const visible = Boolean(
-    state.mode &&
-      playback &&
-      (playback.isPlaying || music.muted || Date.now() - music.lastPlayingAt < MUSIC_KEEP_PAUSED_MS),
+    state.mode && playback && (playback.isPlaying || Date.now() - music.lastPlayingAt < MUSIC_KEEP_PAUSED_MS),
   );
   $('music-bar').hidden = !visible;
   if (!visible) return;
@@ -1160,80 +1144,15 @@ async function toggleMusic() {
   playback.isPlaying = !wasPlaying; // sofort anzeigen, Spotify braucht etwa eine Sekunde
   music.lastPlayingAt = Date.now();
   renderMusic();
-  const ok = await musicCommand(wasPlaying ? pauseMusic : resumeMusic);
+  const ok = await musicCommand(wasPlaying ? spotify.pause : resumeMusic);
   if (!ok && music.playback) {
     music.playback.isPlaying = wasPlaying;
     renderMusic();
   }
 }
 
-/**
- * Pause, ohne dass iOS Spotify einschlafen lässt: Stelle merken und Spotify „leise weiterlaufen“ lassen –
- * per Lautstärke 0, oder (wenn das Gerät das nicht erlaubt, z. B. iPhone) mit einem stummen Titel in Dauerschleife.
- * So klappt „Play“ auch nach längerer Pause direkt aus MotoDash.
- */
-async function pauseMusic() {
-  const current = await spotify.getPlayback();
-  if (current?.isPlaying && current.deviceId && current.trackUri !== SILENT_TRACK_URI) {
-    const hold = {
-      trackUri: current.trackUri,
-      contextUri: current.contextUri,
-      positionMs: current.progressMs + (Date.now() - current.fetchedAt),
-      deviceId: current.deviceId,
-      volume: current.volume > 0 ? current.volume : 60,
-      repeatState: current.repeatState,
-      pausedAt: Date.now(),
-      display: { title: current.title, artist: current.artist, cover: current.cover },
-    };
-
-    if (current.supportsVolume) {
-      try {
-        await spotify.setVolume(0, current.deviceId);
-        return startMutedPause({ ...hold, method: 'volume' });
-      } catch (err) {
-        if (err.code !== 'no-volume' && err.code !== 'restricted') throw err;
-      }
-    }
-    music.volumeSupported = false;
-
-    try {
-      await spotify.playUris([SILENT_TRACK_URI], current.deviceId);
-      // Dauerschleife – sonst würde Spotify nach dem stummen Titel von selbst andere Songs spielen.
-      await spotify.setRepeat('track', current.deviceId).catch(() => {});
-      return startMutedPause({ ...hold, method: 'silence' });
-    } catch (err) {
-      if (err.code === 'network' || err.code === 'no-device') throw err;
-      // Titel nicht abspielbar (z. B. nicht verfügbar) → normale Pause
-    }
-  }
-  await spotify.pause();
-}
-
-function startMutedPause(hold) {
-  music.muted = hold;
-  saveMutedPause();
-}
-
-/** Weiterspielen – nach einer Stumm-Pause an der gemerkten Stelle, sonst normal (ggf. eingeschlafenes Gerät wecken). */
+/** Weiterspielen – ist Spotify eingeschlafen, gezielt das zuletzt genutzte Gerät ansprechen. */
 async function resumeMusic() {
-  const hold = music.muted;
-  if (hold) {
-    clearMutedPause();
-    try {
-      if (hold.method === 'silence') await spotify.setRepeat(hold.repeatState, hold.deviceId).catch(() => {});
-      const current = await spotify.getPlayback().catch(() => null);
-      if (current?.trackUri === hold.trackUri) {
-        await spotify.seek(hold.positionMs, hold.deviceId);
-        if (!current.isPlaying) await spotify.play(hold.deviceId);
-      } else {
-        await spotify.playAt(hold); // zurück zum Titel – wenn möglich mit seiner Playlist/seinem Album
-      }
-    } finally {
-      if (hold.method === 'volume') await spotify.setVolume(hold.volume, hold.deviceId).catch(() => {});
-    }
-    return;
-  }
-
   try {
     await spotify.play();
   } catch (err) {
@@ -1242,74 +1161,10 @@ async function resumeMusic() {
   }
 }
 
-/** Weiter/Zurück – während einer Stumm-Pause vom pausierten Titel aus, nicht vom stummen. */
-async function skipMusic(direction) {
-  const hold = music.muted;
-  const skip = direction === 'next' ? spotify.nextTrack : spotify.previousTrack;
-  if (!hold) return skip();
-
-  clearMutedPause();
-  music.lastPlayingAt = Date.now();
-  if (hold.method === 'volume') {
-    await skip();
-    await spotify.setVolume(hold.volume, hold.deviceId);
-    return;
-  }
-  await spotify.setRepeat(hold.repeatState, hold.deviceId).catch(() => {});
-  await spotify.playAt({ ...hold, positionMs: 0 }); // „Zurück“ = pausierten Titel von vorn
-  if (direction === 'next') {
-    await new Promise((resolve) => setTimeout(resolve, 400)); // Spotify erst umschalten lassen
-    await spotify.nextTrack();
-  }
-}
-
-/** Stumm-Pause beenden (Zeitlimit, Fahrtende, App-Neustart): echte Pause auf dem gemerkten Titel. */
-async function endMutedPause() {
-  const hold = music.muted;
-  if (!hold) return;
-  clearMutedPause();
-  if (hold.method === 'volume') {
-    await spotify.pause().catch(() => {});
-    await spotify.setVolume(hold.volume, hold.deviceId).catch(() => {});
-  } else {
-    // Den eigenen Titel zurückholen und sofort pausieren, damit Spotify später nicht auf dem stummen Titel steht.
-    await spotify.setRepeat(hold.repeatState, hold.deviceId).catch(() => {});
-    await spotify.playAt(hold).catch(() => {});
-    await spotify.pause().catch(() => {});
-  }
-  if (music.playback) music.playback = { ...music.playback, isPlaying: false };
-  renderMusic();
-}
-
-function loadMutedPause() {
-  try {
-    return JSON.parse(localStorage.getItem(MUTED_PAUSE_KEY));
-  } catch {
-    return null;
-  }
-}
-
-function saveMutedPause() {
-  try {
-    localStorage.setItem(MUTED_PAUSE_KEY, JSON.stringify(music.muted));
-  } catch {
-    // ohne Speicher gilt die Stumm-Pause nur, solange die App offen ist
-  }
-}
-
-function clearMutedPause() {
-  music.muted = null;
-  try {
-    localStorage.removeItem(MUTED_PAUSE_KEY);
-  } catch {
-    // nichts zu tun
-  }
-}
-
 /** @returns {Promise<boolean>} ob der Befehl angekommen ist */
 async function musicCommand(command) {
   if (music.busy) return false; // noch ein Befehl unterwegs
-  music.busy = true; // solange keine Abfragen – sonst taucht z. B. kurz der stumme Titel in der Leiste auf
+  music.busy = true;
   let ok = true;
   try {
     await command();
@@ -1328,6 +1183,28 @@ async function musicCommand(command) {
   return ok;
 }
 
+/**
+ * Version 1.5.2/1.5.3 hatten eine „Stumm-Pause“ (Lautstärke 0 bzw. stummer Titel in Dauerschleife).
+ * Falls die App mitten in so einer Pause geschlossen wurde: Wiederholung/Lautstärke zurückstellen.
+ */
+async function cleanUpLegacyMutedPause() {
+  let hold = null;
+  try {
+    hold = JSON.parse(localStorage.getItem(LEGACY_MUTED_PAUSE_KEY));
+    localStorage.removeItem(LEGACY_MUTED_PAUSE_KEY);
+  } catch {
+    return;
+  }
+  if (!hold || !spotify.isConnected()) return;
+  if (hold.method === 'volume') {
+    await spotify.setVolume(hold.volume, hold.deviceId).catch(() => {});
+  } else {
+    await spotify.setRepeat(hold.repeatState ?? 'off', hold.deviceId).catch(() => {});
+    await spotify.playAt(hold).catch(() => {});
+    await spotify.pause().catch(() => {});
+  }
+}
+
 async function handleSpotifyReturn() {
   const result = await spotify.handleRedirect();
   if (!result) return;
@@ -1337,14 +1214,8 @@ async function handleSpotifyReturn() {
 
 function renderSpotifySetting(message) {
   const connected = spotify.isConnected();
-  const pauseInfo =
-    music.volumeSupported === true
-      ? ' Pause schaltet stumm und läuft im Hintergrund weiter – so schläft Spotify nicht ein.'
-      : music.volumeSupported === false
-        ? ' Pause spielt einen stummen Titel in Dauerschleife – so schläft Spotify nicht ein und Play geht an der gleichen Stelle weiter.'
-        : '';
   $('spotify-hint').textContent = connected
-    ? `Verbunden. Während der Fahrt erscheint unten auf der Karte eine Musik-Leiste, sobald Spotify spielt.${pauseInfo}`
+    ? 'Verbunden. Während der Fahrt erscheint unten auf der Karte eine Musik-Leiste, sobald Spotify spielt.'
     : 'Steuert deine Spotify-Wiedergabe (Spotify Premium nötig). Einmalig eine eigene Spotify-App anlegen und die Client-ID hier eintragen.';
   $('spotify-client').hidden = connected;
   if (!$('spotify-client-id').value) $('spotify-client-id').value = spotify.getClientId();
@@ -1384,55 +1255,246 @@ async function onSpotifyButton() {
   }
 }
 
-// ---------- Fahrt-Auswertung ----------
+// ---------- Aufnahmen & Fahrtenbuch ----------
+
+/** @param source 'manual' (Knopf) oder 'route' (automatisch beim Routenstart) */
+function startRecording(source, title) {
+  if (recording || !state.mode) return;
+  recording = { stats: new RideStats(), source, title };
+  if (state.lastFix) recording.stats.add(state.lastFix, state.speedKmh);
+  renderRecordButton();
+}
+
+/** Aufnahme beenden, speichern und Auswertung zeigen. */
+function finishRecording() {
+  if (!recording) return;
+  const { stats, source, title } = recording;
+  recording = null;
+  $('btn-record').classList.remove('is-confirm');
+  renderRecordButton();
+
+  const summary = stats.summary();
+  if (summary.meters < MIN_RIDE_METERS) {
+    showToast('Aufnahme unter 200 m – nicht gespeichert');
+    return;
+  }
+  showRideSummary(saveRide({ ...summary, source, title }));
+}
+
+/** Starten mit einem Tipp, Beenden erst beim zweiten – gegen versehentliches Stoppen während der Fahrt. */
+function onRecordTap() {
+  const button = $('btn-record');
+  if (!recording) {
+    startRecording('manual', 'Aufnahme');
+    return;
+  }
+  if (button.classList.contains('is-confirm')) {
+    finishRecording();
+    return;
+  }
+  button.classList.add('is-confirm');
+  renderRecordButton();
+  setTimeout(() => {
+    button.classList.remove('is-confirm');
+    renderRecordButton();
+  }, 3000);
+}
+
+function renderRecordButton() {
+  const button = $('btn-record');
+  button.hidden = !state.mode;
+  button.classList.toggle('is-recording', Boolean(recording));
+  if (!recording) {
+    if (button.dataset.view !== 'idle') {
+      button.dataset.view = 'idle';
+      button.innerHTML = '<span class="rec-dot"></span>';
+      button.setAttribute('aria-label', 'Aufnahme starten');
+    }
+    return;
+  }
+  if (button.classList.contains('is-confirm')) {
+    button.dataset.view = 'confirm';
+    button.innerHTML = '<span class="rec-label">Stoppen?</span>';
+    button.setAttribute('aria-label', 'Aufnahme beenden');
+    return;
+  }
+  if (button.dataset.view !== 'recording') {
+    button.dataset.view = 'recording';
+    button.innerHTML = '<span class="rec-dot"></span><span class="rec-time"></span>';
+    button.setAttribute('aria-label', 'Aufnahme läuft – zweimal tippen zum Beenden');
+  }
+  button.querySelector('.rec-time').textContent = formatStopwatch((Date.now() - recording.stats.startedAt) / 1000);
+}
+
+function formatStopwatch(totalSeconds) {
+  const seconds = Math.floor(totalSeconds);
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = String(seconds % 60).padStart(2, '0');
+  return h ? `${h}:${String(m).padStart(2, '0')}:${s}` : `${m}:${s}`;
+}
 
 function renderRideSetting() {
-  const riding = Boolean(state.mode);
-  const lastRide = loadLastRide();
-  $('ride-end').hidden = !riding || state.mode === 'demo'; // Demo hat ihren eigenen Knopf
-  $('ride-last').hidden = riding || !lastRide;
-  if (riding && rideStats) {
-    const current = rideStats.summary();
-    $('ride-hint').textContent = `Bisher: ${formatDistance(current.meters)} · ${formatDuration(current.totalSeconds)} unterwegs`;
+  const rides = loadRides();
+  $('ride-end').hidden = state.mode !== 'live'; // Demo hat ihren eigenen Knopf
+  $('ride-log').hidden = !rides.length;
+  $('ride-log').textContent = `Fahrtenbuch (${rides.length})`;
+  if (recording) {
+    const current = recording.stats.summary();
+    $('ride-hint').textContent = `Aufnahme läuft: ${formatDistance(current.meters)} · ${formatStopwatch(current.totalSeconds)}`;
   } else {
-    $('ride-hint').textContent = 'Nach dem Beenden siehst du Strecke, Zeiten, Höhenmeter und maximale Schräglage.';
+    $('ride-hint').textContent = 'Aufnahmen startest du mit dem roten ● auf der Karte. Routen werden automatisch aufgenommen.';
   }
 }
 
-function showRideSummary(summary) {
-  if (!summary) return;
-  const dateFormat = new Intl.DateTimeFormat('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit' });
-  $('sum-date').textContent = `${dateFormat.format(new Date(summary.startedAt))} · ${clockFormat.format(new Date(summary.startedAt))}–${clockFormat.format(new Date(summary.endedAt))}`;
-  $('sum-distance').textContent = formatDistance(summary.meters);
-  $('sum-moving').textContent = formatDuration(summary.movingSeconds);
-  $('sum-total').textContent = formatDuration(summary.totalSeconds);
-  $('sum-avg').textContent = summary.avgKmh ? `${Math.round(summary.avgKmh)} km/h` : '–';
-  $('sum-max').textContent = `${Math.round(summary.maxKmh)} km/h`;
-  $('sum-climb').textContent = `${summary.climbMeters.toLocaleString('de-DE')} m`;
-  $('sum-lean-left').textContent = `${summary.maxLeanLeft}°`;
-  $('sum-lean-right').textContent = `${summary.maxLeanRight}°`;
+const rideDateFormat = new Intl.DateTimeFormat('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit', year: '2-digit' });
+const rideShortDateFormat = new Intl.DateTimeFormat('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit' });
+
+function rideTimeRange(ride) {
+  return `${rideDateFormat.format(new Date(ride.startedAt))} · ${clockFormat.format(new Date(ride.startedAt))}–${clockFormat.format(new Date(ride.endedAt))}`;
+}
+
+function showRideSummary(ride) {
+  if (!ride) return;
+  summaryRide = ride;
+  $('summary-title').textContent = ride.title ?? 'Deine Fahrt';
+  $('sum-date').textContent = rideTimeRange(ride);
+  $('sum-distance').textContent = formatDistance(ride.meters);
+  $('sum-moving').textContent = formatDuration(ride.movingSeconds);
+  $('sum-total').textContent = formatDuration(ride.totalSeconds);
+  $('sum-avg').textContent = ride.avgKmh ? `${Math.round(ride.avgKmh)} km/h` : '–';
+  $('sum-max').textContent = `${Math.round(ride.maxKmh)} km/h`;
+  $('sum-climb').textContent = `${ride.climbMeters.toLocaleString('de-DE')} m`;
+  $('sum-lean-left').textContent = `${ride.maxLeanLeft}°`;
+  $('sum-lean-right').textContent = `${ride.maxLeanRight}°`;
+  $('summary-delete').classList.remove('is-confirm');
+  $('summary-delete').textContent = 'Aufnahme löschen';
+  $('lean-needle-left').style.transform = 'rotate(0deg)';
+  $('lean-needle-right').style.transform = 'rotate(0deg)';
+  $('sum-map-wrap').hidden = !(ride.track?.length > 1);
   $('ride-summary').hidden = false;
-  // Zeiger erst nach dem Einblenden drehen, damit man die Bewegung sieht.
+  $('ride-summary').scrollTop = 0;
+
+  // Erst nach dem Einblenden: Zeiger drehen und Karte in der jetzt sichtbaren Fläche aufbauen.
   requestAnimationFrame(() => {
-    $('lean-needle-left').style.transform = `rotate(${-summary.maxLeanLeft}deg)`;
-    $('lean-needle-right').style.transform = `rotate(${summary.maxLeanRight}deg)`;
+    $('lean-needle-left').style.transform = `rotate(${-ride.maxLeanLeft}deg)`;
+    $('lean-needle-right').style.transform = `rotate(${ride.maxLeanRight}deg)`;
+    renderSummaryMap(ride);
   });
 }
 
-function loadLastRide() {
+/** Gefahrene Strecke auf einer kleinen Karte, farbig nach Tempo. */
+function renderSummaryMap(ride) {
+  summaryMap?.remove();
+  summaryMap = null;
+  if (!(ride.track?.length > 1)) return;
+
+  const { lines, ends, bounds } = trackGeoJSON(ride.track);
+  const style = buildStyle(settings.theme);
+  style.sources.track = { type: 'geojson', data: lines };
+  style.sources.trackEnds = { type: 'geojson', data: ends };
+  style.layers.push(
+    {
+      id: 'track-casing',
+      type: 'line',
+      source: 'track',
+      layout: { 'line-cap': 'round', 'line-join': 'round' },
+      paint: { 'line-color': '#0b0d10', 'line-width': 8, 'line-opacity': 0.6 },
+    },
+    {
+      id: 'track-line',
+      type: 'line',
+      source: 'track',
+      layout: { 'line-cap': 'round', 'line-join': 'round' },
+      paint: { 'line-color': ['interpolate', ['linear'], ['get', 'kmh'], ...TRACK_SPEED_COLORS], 'line-width': 5 },
+    },
+    {
+      id: 'track-ends',
+      type: 'circle',
+      source: 'trackEnds',
+      paint: {
+        'circle-radius': 7,
+        'circle-color': ['match', ['get', 'kind'], 'start', '#3ddc84', '#ff3b3b'],
+        'circle-stroke-color': '#ffffff',
+        'circle-stroke-width': 2.5,
+      },
+    },
+  );
+
   try {
-    return JSON.parse(localStorage.getItem(LAST_RIDE_KEY));
+    summaryMap = new maplibregl.Map({
+      container: 'sum-map',
+      style,
+      bounds,
+      fitBoundsOptions: { padding: 28, maxZoom: 15 },
+      attributionControl: { compact: true },
+      dragRotate: false,
+      pitchWithRotate: false,
+      touchPitch: false,
+    });
+    summaryMap.touchZoomRotate.disableRotation();
+    // Quellenangabe gleich zum (i) einklappen, sonst liegt sie über dem Endpunkt.
+    summaryMap.once('load', () => {
+      const attribution = $('sum-map').querySelector('.maplibregl-ctrl-attrib.maplibregl-compact');
+      attribution?.classList.remove('maplibregl-compact-show');
+      attribution?.removeAttribute('open');
+    });
   } catch {
-    return null;
+    $('sum-map-wrap').hidden = true; // ohne WebGL einfach ohne Karte
   }
 }
 
-function saveLastRide(summary) {
-  try {
-    localStorage.setItem(LAST_RIDE_KEY, JSON.stringify(summary));
-  } catch {
-    // ohne Speicher gibt es nur die Anzeige direkt nach der Fahrt
+function closeRideSummary() {
+  $('ride-summary').hidden = true;
+  summaryMap?.remove(); // Grafikspeicher freigeben
+  summaryMap = null;
+  summaryRide = null;
+}
+
+/** Löschen erst beim zweiten Tippen. */
+function onDeleteRideTap() {
+  const button = $('summary-delete');
+  if (!summaryRide) return;
+  if (!button.classList.contains('is-confirm')) {
+    button.classList.add('is-confirm');
+    button.textContent = 'Wirklich löschen?';
+    setTimeout(() => {
+      button.classList.remove('is-confirm');
+      button.textContent = 'Aufnahme löschen';
+    }, 3000);
+    return;
   }
+  deleteRide(summaryRide.id);
+  closeRideSummary();
+  if (!$('rides-sheet').hidden) renderRideLog();
+}
+
+function openRideLog() {
+  renderRideLog();
+  $('rides-sheet').hidden = false;
+}
+
+function renderRideLog() {
+  const rides = loadRides();
+  $('rides-empty').hidden = rides.length > 0;
+  $('rides-list').replaceChildren(
+    ...rides.map((ride) => {
+      const row = document.createElement('li');
+      const button = document.createElement('button');
+      button.className = 'ride-row';
+      button.innerHTML =
+        '<span class="ride-icon"></span><span class="row-text"><span class="row-title"></span><span class="row-sub"></span></span><span class="ride-km"></span>';
+      button.querySelector('.ride-icon').innerHTML = ride.source === 'route' ? ICONS.route : '<span class="rec-dot"></span>';
+      button.querySelector('.row-title').textContent = ride.title ?? 'Fahrt';
+      const started = new Date(ride.startedAt);
+      button.querySelector('.row-sub').textContent =
+        `${rideShortDateFormat.format(started)} · ${clockFormat.format(started)} · ${formatDuration(ride.movingSeconds)}`;
+      button.querySelector('.ride-km').textContent = formatDistance(ride.meters);
+      button.addEventListener('click', () => showRideSummary(ride));
+      row.append(button);
+      return row;
+    }),
+  );
 }
 
 /** Cockpit-Seite im Querformat (links/rechts). */

@@ -1,4 +1,4 @@
-// Fahrt-Auswertung: Strecke, Zeiten, Tempo, Höhenmeter und maximale Schräglage.
+// Fahrt-Auswertung: Strecke, Zeiten, Tempo, Höhenmeter, maximale Schräglage und die gefahrene Linie.
 //
 // Schräglage: Ein am Lenker montiertes Handy kann die Schräglage mit seinen Lagesensoren kaum messen –
 // in der Kurve drückt die Fliehkraft genau so, dass „unten“ für das Handy weiter Richtung Motorrad zeigt.
@@ -11,6 +11,7 @@ const MIN_LEAN_SPEED_KMH = 20; // darunter ist die GPS-Richtung zu unruhig
 const MAX_LEAN_DEG = 60;
 const MAX_ACCURACY_METERS = 40;
 const CLIMB_STEP_METERS = 5; // gegen GPS-Rauschen bei der Höhe
+const TRACK_STEP_METERS = 25; // so dicht wird die Linie gespeichert – reicht für die Karte, spart Speicher
 
 export class RideStats {
   constructor() {
@@ -25,11 +26,13 @@ export class RideStats {
     this.prevCourse = null;
     this.turnRates = [];
     this.altitudeRef = null;
+    this.track = []; // [lng, lat, km/h]
   }
 
   /** @param fix GPS-Punkt ({lng, lat, accuracy, altitude, timestamp}) @param speedKmh bereinigtes Tempo */
   add(fix, speedKmh) {
     if ((fix.accuracy ?? 0) > MAX_ACCURACY_METERS) return;
+    this.trackPoint(fix, speedKmh);
     const prev = this.prev;
     this.prev = fix;
     if (!prev) return;
@@ -46,6 +49,12 @@ export class RideStats {
     this.maxKmh = Math.max(this.maxKmh, speedKmh);
     this.trackClimb(fix.altitude);
     this.trackLean(prev, fix, meters, seconds, speedKmh);
+  }
+
+  trackPoint(fix, speedKmh) {
+    const last = this.track.at(-1);
+    if (last && distance([last[0], last[1]], [fix.lng, fix.lat]) < TRACK_STEP_METERS) return;
+    this.track.push([round5(fix.lng), round5(fix.lat), Math.round(speedKmh)]);
   }
 
   trackClimb(altitude) {
@@ -94,6 +103,9 @@ export class RideStats {
       maxLeanLeft: Math.round(this.maxLeanLeft),
       maxLeanRight: Math.round(this.maxLeanRight),
       climbMeters: Math.round(this.climbMeters),
+      track: this.track.slice(),
     };
   }
 }
+
+const round5 = (value) => Math.round(value * 1e5) / 1e5;
