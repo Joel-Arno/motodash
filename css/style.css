@@ -96,6 +96,10 @@ svg.i {
 }
 
 #map-wrap {
+  --edge-top: var(--safe-top);
+  --edge-right: var(--safe-right);
+  --edge-bottom: 0px;
+  --edge-left: var(--safe-left);
   position: relative;
   min-width: 0;
   min-height: 0;
@@ -163,6 +167,19 @@ svg.i {
 
   :root[data-cockpit="right"] #map-wrap {
     grid-column: 1;
+  }
+
+  #map-wrap {
+    --edge-top: 0px;
+    --edge-bottom: var(--safe-bottom);
+  }
+
+  :root[data-cockpit="right"] #map-wrap {
+    --edge-right: 0px;
+  }
+
+  :root[data-cockpit="left"] #map-wrap {
+    --edge-left: 0px;
   }
 }
 
@@ -291,28 +308,27 @@ svg.i {
 .actions {
   grid-area: actions;
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 10px;
+  grid-template-columns: 1fr 1fr 1fr 64px;
+  gap: 8px;
   width: 100%;
 }
 
-/* Im Querformat ist das Cockpit schmal: Einstellungen als eigene Zeile darunter. */
+.actions .action-settings span {
+  display: none;
+}
+
+/* Im Querformat ist das Cockpit schmal: 2×2 mit Beschriftung. */
 @media (orientation: landscape) {
   .actions {
     grid-template-columns: 1fr 1fr;
-    gap: 8px;
   }
 
-  .actions .action-settings {
-    grid-column: 1 / -1;
-    min-height: 48px;
-    flex-direction: row;
-    gap: 8px;
+  .actions .action {
+    min-height: 58px;
   }
 
-  .actions .action-settings svg {
-    width: 22px;
-    height: 22px;
+  .actions .action-settings span {
+    display: inline;
   }
 }
 
@@ -337,7 +353,7 @@ svg.i {
 .fabs {
   position: absolute;
   top: 50%;
-  right: max(12px, var(--safe-right));
+  right: calc(12px + var(--edge-right));
   transform: translateY(-50%);
   display: flex;
   flex-direction: column;
@@ -380,8 +396,9 @@ svg.i {
 
 .badge {
   position: absolute;
-  top: calc(12px + var(--safe-top));
-  left: 12px;
+  z-index: 2;
+  top: calc(12px + var(--edge-top));
+  left: calc(12px + var(--edge-left));
   min-height: 48px;
   display: flex;
   align-items: center;
@@ -406,26 +423,14 @@ svg.i {
 
 /* Querformat: Zoom-Knöpfe neben dem Cockpit, Demo-Hinweis auf der anderen Seite. */
 @media (orientation: landscape) {
-  .badge {
-    top: 12px;
-  }
-
   :root[data-cockpit="left"] .fabs {
     right: auto;
-    left: 12px;
+    left: calc(12px + var(--edge-left));
   }
 
   :root[data-cockpit="left"] .badge {
     left: auto;
-    right: max(12px, var(--safe-right));
-  }
-
-  :root[data-cockpit="right"] .fabs {
-    right: 12px;
-  }
-
-  :root[data-cockpit="right"] .badge {
-    left: max(12px, var(--safe-left));
+    right: calc(12px + var(--edge-right));
   }
 }
 
@@ -715,4 +720,616 @@ svg.i {
   .btn {
     min-height: 54px;
   }
+}
+
+/* ---------- Route: Auswahl, Ankunft, Hinweise ---------- */
+
+.chooser {
+  position: absolute;
+  z-index: 3;
+  left: calc(12px + var(--edge-left));
+  right: calc(12px + var(--edge-right));
+  bottom: calc(12px + var(--edge-bottom));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 20px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+}
+
+.chooser-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-left: 4px;
+}
+
+.chooser-title {
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.choice-list {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.route-card {
+  flex: 1 1 0;
+  min-width: 96px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: var(--panel-2);
+  border: 2px solid transparent;
+  text-align: left;
+}
+
+.route-card[aria-pressed="true"] {
+  border-color: var(--accent);
+}
+
+.rc-time {
+  font-size: 22px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.rc-sub {
+  font-size: 13px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.rc-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.rc-tag {
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--panel);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+/* Hochformat: Zoom-Knöpfe während der Routenwahl nach oben, damit sie nicht im Auswahlfenster liegen. */
+@media (orientation: portrait) {
+  #app.is-choosing .fabs {
+    top: calc(84px + var(--edge-top));
+    transform: none;
+  }
+}
+
+.chooser-actions {
+  display: grid;
+  grid-template-columns: 1fr 2fr;
+  gap: 8px;
+}
+
+.chooser-actions .btn {
+  min-height: 56px;
+  font-size: 17px;
+}
+
+/* Querformat: Auswahl als Spalte am Kartenrand gegenüber vom Cockpit. */
+@media (orientation: landscape) {
+  .chooser {
+    top: 72px;
+    right: auto;
+    width: min(290px, 55%);
+  }
+
+  :root[data-cockpit="left"] .chooser {
+    left: auto;
+    right: calc(12px + var(--edge-right));
+  }
+
+  .choice-list {
+    flex-direction: column;
+    overflow-x: hidden;
+    overflow-y: auto;
+    min-height: 0;
+    flex: 1;
+  }
+
+  .route-card {
+    flex: none;
+  }
+
+  .chooser-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .chooser-actions .btn {
+    min-height: 50px;
+  }
+
+  #route-cancel {
+    order: 2;
+  }
+}
+
+.text-btn {
+  min-height: 44px;
+  padding: 0 12px;
+  border-radius: 12px;
+  color: var(--accent);
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.route-info {
+  position: absolute;
+  z-index: 2;
+  left: calc(12px + var(--edge-left));
+  bottom: calc(12px + var(--edge-bottom));
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 8px 8px 8px 16px;
+  border-radius: 18px;
+  background: var(--fab-bg);
+  box-shadow: var(--shadow);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+}
+
+.ri-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.ri-eta {
+  font-size: 28px;
+  font-weight: 800;
+  line-height: 1.05;
+  font-variant-numeric: tabular-nums;
+}
+
+.ri-sub {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.ri-end {
+  min-width: 52px;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 12px;
+  border-radius: 14px;
+  background: var(--panel-2);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.ri-end svg {
+  width: 24px;
+  height: 24px;
+}
+
+.ri-end span {
+  display: none;
+}
+
+.ri-end.is-confirm {
+  background: var(--bad);
+  color: #ffffff;
+}
+
+.ri-end.is-confirm svg {
+  display: none;
+}
+
+.ri-end.is-confirm span {
+  display: inline;
+}
+
+/* Im Querformat mit Cockpit links liegen dort die Zoom-Knöpfe – Ankunft dann rechts unten. */
+@media (orientation: landscape) {
+  :root[data-cockpit="left"] .route-info {
+    left: auto;
+    right: calc(48px + var(--edge-right));
+  }
+}
+
+.toast {
+  position: absolute;
+  z-index: 4;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  padding: 18px 26px;
+  border-radius: 20px;
+  background: var(--panel);
+  border: 2px solid var(--ok);
+  box-shadow: var(--shadow);
+  font-size: 24px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.stop-marker {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--panel);
+  border: 3px solid #4f9dff;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 800;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
+}
+
+.stop-marker.is-destination {
+  width: 40px;
+  height: 40px;
+  background: #4f9dff;
+  border-color: #ffffff;
+  color: #ffffff;
+}
+
+.stop-marker svg {
+  width: 20px;
+  height: 20px;
+}
+
+/* ---------- Planer (Ziel suchen, Zwischenziele, Favoriten) ---------- */
+
+.fullsheet {
+  position: fixed;
+  inset: 0;
+  z-index: 25;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--bg);
+  padding: var(--safe-top) max(16px, var(--safe-right)) calc(24px + var(--safe-bottom)) max(16px, var(--safe-left));
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.fullsheet-inner {
+  width: min(620px, 100%);
+  margin: 0 auto;
+}
+
+.fs-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 64px;
+  margin-bottom: 8px;
+  background: var(--bg);
+}
+
+.fs-head h2 {
+  flex: 1;
+  margin: 0;
+  font-size: 24px;
+  font-weight: 800;
+}
+
+.icon-btn {
+  flex: none;
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  border-radius: 14px;
+  background: var(--panel-2);
+}
+
+.icon-btn svg {
+  width: 22px;
+  height: 22px;
+}
+
+.icon-btn.is-confirm {
+  width: auto;
+  padding: 0 12px;
+  background: var(--bad);
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.stop-list,
+.place-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.stop-row,
+.place-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 68px;
+  margin-bottom: 8px;
+  padding: 10px 10px 10px 12px;
+  border-radius: 16px;
+  background: var(--panel);
+}
+
+.place-row {
+  padding: 0 10px 0 0;
+}
+
+.stop-badge {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--panel-2);
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.stop-badge svg {
+  width: 20px;
+  height: 20px;
+}
+
+.stop-badge.is-origin {
+  color: var(--accent);
+}
+
+.stop-badge.is-destination {
+  background: #4f9dff;
+  color: #ffffff;
+}
+
+.row-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.row-title {
+  overflow: hidden;
+  font-size: 17px;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.row-sub {
+  overflow: hidden;
+  font-size: 14px;
+  color: var(--muted);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.row-sub:empty {
+  display: none;
+}
+
+.row-controls {
+  display: flex;
+  gap: 6px;
+}
+
+.row-controls .icon-btn {
+  width: 44px;
+  height: 44px;
+}
+
+.place-main {
+  flex: 1;
+  min-width: 0;
+  min-height: 68px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0 10px 14px;
+  text-align: left;
+}
+
+.place-star svg {
+  width: 22px;
+  height: 22px;
+  fill: var(--warn);
+  stroke: var(--warn);
+}
+
+.row-btn {
+  width: 100%;
+  min-height: 60px;
+  margin-bottom: 8px;
+  border-radius: 16px;
+  border: 2px dashed var(--line);
+  color: var(--accent);
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.section-title {
+  margin: 22px 4px 8px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.option-list {
+  margin-bottom: 16px;
+}
+
+.toggle-row {
+  width: 100%;
+  min-height: 62px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  padding: 0 14px 0 16px;
+  border-radius: 16px;
+  background: var(--panel);
+  font-size: 17px;
+  font-weight: 600;
+  text-align: left;
+}
+
+.switch {
+  position: relative;
+  flex: none;
+  width: 54px;
+  height: 32px;
+  border-radius: 999px;
+  background: var(--line);
+  transition: background 0.15s;
+}
+
+.switch::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  transition: transform 0.15s;
+}
+
+.toggle-row[aria-checked="true"] .switch {
+  background: var(--accent);
+}
+
+.toggle-row[aria-checked="true"] .switch::after {
+  transform: translateX(22px);
+}
+
+#plan-view .note,
+#plan-view .error {
+  margin-bottom: 12px;
+}
+
+#calc-route {
+  width: 100%;
+}
+
+.search-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 62px;
+  padding: 0 16px;
+  border-radius: 16px;
+  background: var(--panel);
+  border: 2px solid var(--line);
+}
+
+.search-field:focus-within {
+  border-color: var(--accent);
+}
+
+.search-field svg {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  color: var(--muted);
+}
+
+.search-field input,
+.text-input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 20px;
+}
+
+.search-field input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.search-status {
+  margin: 12px 4px;
+  font-size: 15px;
+  color: var(--muted);
+}
+
+#search-results {
+  margin-top: 12px;
+}
+
+.sheet-title {
+  margin: 0 0 4px;
+  font-size: 22px;
+  font-weight: 800;
+}
+
+.text-input {
+  width: 100%;
+  min-height: 56px;
+  margin: 12px 0 10px;
+  padding: 0 14px;
+  border-radius: 14px;
+  background: var(--panel-2);
+  border: 2px solid var(--line);
+}
+
+.text-input:focus {
+  border-color: var(--accent);
+}
+
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.chip-btn {
+  min-height: 44px;
+  padding: 0 16px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.dialog-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.dialog-actions .btn {
+  min-height: 56px;
+  font-size: 17px;
 }
