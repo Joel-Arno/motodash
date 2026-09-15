@@ -13,8 +13,8 @@
   <link rel="icon" href="icons/icon-192.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@6.9.1/dist/maplibre-gl.css">
-  <link rel="stylesheet" href="css/style.css?v=1.1">
-  <script type="module" src="js/app.js?v=1.1"></script>
+  <link rel="stylesheet" href="css/style.css?v=1.2">
+  <script type="module" src="js/app.js?v=1.2"></script>
 </head>
 <body>
   <div id="app">
@@ -25,6 +25,32 @@
         <b>DEMO</b><span>Beenden</span>
         <svg class="i" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
       </button>
+
+      <div id="route-chooser" class="chooser" hidden>
+        <div class="chooser-head">
+          <span class="chooser-title">Route wählen</span>
+          <button id="route-edit" class="text-btn">Bearbeiten</button>
+        </div>
+        <div id="route-choice-list" class="choice-list"></div>
+        <div class="chooser-actions">
+          <button id="route-cancel" class="btn btn-secondary">Abbrechen</button>
+          <button id="route-start" class="btn btn-primary"><span id="route-start-label">Route starten</span></button>
+        </div>
+      </div>
+
+      <div id="route-info" class="route-info" hidden>
+        <div class="ri-text">
+          <div class="ri-label">Ankunft</div>
+          <div id="route-eta" class="ri-eta">--:--</div>
+          <div id="route-remaining" class="ri-sub">–</div>
+        </div>
+        <button id="route-end" class="ri-end" aria-label="Route beenden">
+          <svg class="i" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+          <span>Beenden?</span>
+        </button>
+      </div>
+
+      <div id="toast" class="toast" role="status" hidden></div>
 
       <div class="fabs">
         <button id="btn-zoom-in" class="fab" aria-label="Hineinzoomen">
@@ -59,7 +85,8 @@
       <div class="actions">
         <button id="btn-view" class="action"></button>
         <button id="btn-theme" class="action"></button>
-        <button id="btn-settings" class="action action-settings"></button>
+        <button id="btn-route" class="action action-route"></button>
+        <button id="btn-settings" class="action action-settings" aria-label="Einstellungen"></button>
       </div>
     </aside>
   </div>
@@ -87,6 +114,63 @@
       </section>
 
       <p class="sheet-foot">MotoDash · Version <span class="app-version"></span></p>
+    </div>
+  </div>
+
+  <div id="planner" class="fullsheet" hidden>
+    <div class="fullsheet-inner">
+      <header class="fs-head">
+        <button id="planner-back" class="icon-btn" aria-label="Zurück" hidden>
+          <svg class="i" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg>
+        </button>
+        <h2 id="planner-title">Route planen</h2>
+        <button id="planner-close" class="text-btn">Schließen</button>
+      </header>
+
+      <section id="plan-view">
+        <ol id="stop-list" class="stop-list"></ol>
+        <button id="add-stop" class="row-btn">+ Ziel hinzufügen</button>
+
+        <h3 class="section-title">Optionen</h3>
+        <div id="route-option-list" class="option-list"></div>
+
+        <p id="plan-hint" class="note" hidden>Mit Zwischenzielen gibt es nur eine Route, keine Alternativen.</p>
+        <p id="plan-error" class="error" hidden></p>
+        <button id="calc-route" class="btn btn-primary">Route berechnen</button>
+      </section>
+
+      <section id="search-view" hidden>
+        <label class="search-field">
+          <svg class="i" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>
+          <input id="search-input" type="search" placeholder="Adresse oder Ort" autocomplete="off" autocorrect="off" enterkeyhint="search">
+        </label>
+        <p id="search-status" class="search-status" hidden></p>
+        <ul id="search-results" class="place-list"></ul>
+
+        <div id="favorites-block">
+          <h3 class="section-title">Favoriten</h3>
+          <p id="favorites-empty" class="note">Noch keine Favoriten. Tippe bei einem Suchergebnis auf den Stern oder speichere deinen Standort.</p>
+          <ul id="favorite-list" class="place-list"></ul>
+          <button id="save-here" class="row-btn">★ Aktuellen Standort speichern</button>
+        </div>
+      </section>
+    </div>
+
+    <div id="fav-dialog" class="sheet-backdrop" hidden>
+      <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="fav-title">
+        <h2 id="fav-title" class="sheet-title">Als Favorit speichern</h2>
+        <p id="fav-place" class="note"></p>
+        <input id="fav-name" class="text-input" type="text" placeholder="Name, z. B. Zuhause" maxlength="40" autocomplete="off">
+        <div class="chip-row">
+          <button class="chip-btn" data-fav-name="Zuhause">Zuhause</button>
+          <button class="chip-btn" data-fav-name="Arbeit">Arbeit</button>
+          <button class="chip-btn" data-fav-name="Tankstelle">Tankstelle</button>
+        </div>
+        <div class="dialog-actions">
+          <button id="fav-cancel" class="btn btn-secondary">Abbrechen</button>
+          <button id="fav-save" class="btn btn-primary" disabled>Speichern</button>
+        </div>
+      </div>
     </div>
   </div>
 
