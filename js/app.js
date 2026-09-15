@@ -1,13 +1,13 @@
 import * as maplibregl from 'https://cdn.jsdelivr.net/npm/maplibre-gl@6.9.1/dist/maplibre-gl.mjs';
 // Die ?v=… Anhänge sorgen dafür, dass das iPhone nach einem Update die neuen Dateien lädt.
-// Bei jeder Änderung APP_VERSION und alle ?v= (in allen js-Dateien und index.html) gemeinsam erhöhen.
+// Bei jeder Änderung APP_VERSION erhöhen und bei jeder geänderten Datei deren ?v= überall, wo sie geladen wird.
 import { buildStyle } from './map-style.js?v=1.2.1';
 import { DemoRide } from './demo.js?v=1.2.1';
 import { angleDiff, bearing, distance } from './geo.js?v=1.2.1';
 import { createPlanner } from './planner.js?v=1.2.1';
 import { fetchRoutes, RouteProgress } from './routing.js?v=1.2.1';
 
-const APP_VERSION = '1.2.1';
+const APP_VERSION = '1.2.2';
 const ARRIVAL_METERS = 30;
 
 const $ = (id) => document.getElementById(id);
@@ -39,7 +39,7 @@ const state = {
   touching: false, // Finger auf der Karte – Kamera pausiert, sonst bricht MapLibre die Geste ab
   pinched: false, // während der aktuellen Berührung lagen zwei Finger auf der Karte
   userZooming: false, // Mausrad/Doppeltipp-Zoom läuft
-  dragCancelAt: 0,
+  dragEndedFollow: false, // diese Berührung hat das Mitfahren durch Verschieben beendet
   watchId: null,
   demo: null,
 };
@@ -376,16 +376,19 @@ function setFollow(follow) {
 function onMapTouch(e) {
   const fingers = e.touches.length;
   state.touching = fingers > 0;
+  if (e.type === 'touchstart' && fingers === 1) state.dragEndedFollow = false; // neue Berührung
 
   if (fingers >= 2 && !state.pinched) {
     state.pinched = true;
-    // Der erste Finger hat das Mitfahren kurz beendet, aber eigentlich wollte man zoomen.
-    if (!state.follow && state.mode && performance.now() - state.dragCancelAt < 600) setFollow(true);
+    // Der erste Finger ist beim Ansetzen zum Zoomen verrutscht und hat das Mitfahren beendet –
+    // das zählt nicht. Wer vorher schon frei umhergeschaut hat, bleibt dort.
+    if (state.dragEndedFollow) setFollow(true);
   }
 
   if (fingers === 0) {
     const wasPinch = state.pinched;
     state.pinched = false;
+    state.dragEndedFollow = false;
     if (wasPinch) keepZoomAndReturn();
     else if (state.follow) returnToRider(250);
   }
@@ -393,9 +396,9 @@ function onMapTouch(e) {
 
 function onUserDrag(e) {
   if (!e.originalEvent || !state.mode) return;
-  if (state.pinched || e.originalEvent.touches?.length >= 2) return;
+  if (state.pinched || e.originalEvent.touches?.length >= 2 || !state.follow) return;
   setFollow(false);
-  state.dragCancelAt = performance.now();
+  state.dragEndedFollow = true;
 }
 
 /** Gezoomte Stufe übernehmen und weiter mitfahren. */
@@ -580,7 +583,8 @@ function fitRoutesIntoView() {
   const chooser = $('route-chooser').getBoundingClientRect();
   const fabs = document.querySelector('.fabs').getBoundingClientRect();
   const badge = $('demo-badge').getBoundingClientRect();
-  const padding = { top: 50, bottom: 30, left: 30, right: 30 };
+  // Genug Rand, damit Start-Pfeil und Zielfahne nicht abgeschnitten werden.
+  const padding = { top: 50, bottom: 48, left: 40, right: 40 };
   if (!$('demo-badge').hidden) padding.top = badge.bottom - wrap.top + 24;
 
   if (chooser.width > wrap.width * 0.6) {
@@ -593,6 +597,7 @@ function fitRoutesIntoView() {
   if (fabs.left - wrap.left < wrap.right - fabs.right) padding.left = Math.max(padding.left, fabs.right - wrap.left + 16);
   else padding.right = Math.max(padding.right, wrap.right - fabs.left + 16);
 
+  map.resize(); // Cockpit wurde gerade ausgeblendet – Karte ist größer geworden
   map.jumpTo({ bearing: 0, pitch: 0, padding: { top: 0, bottom: 0, left: 0, right: 0 } });
   map.fitBounds([[minLng, minLat], [maxLng, maxLat]], { padding, maxZoom: 15, duration: 700 });
 }
