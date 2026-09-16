@@ -28,10 +28,30 @@ if (synth) {
 
 export const voiceSupported = Boolean(synth);
 
-/** Alle deutschen Stimmen des Geräts – für die Auswahl in den Einstellungen. */
+// Apple verrät die Güte der Stimme in der Kennung: compact = mitgeliefert, enhanced/premium = nachgeladen.
+const QUALITY_NAMES = [
+  [/premium/i, 'Premium'],
+  [/enhanced/i, 'Verbessert'],
+];
+
+const voiceQuality = (uri = '') => QUALITY_NAMES.find(([pattern]) => pattern.test(uri))?.[1] ?? '';
+
+/**
+ * Alle deutschen Stimmen des Geräts – für die Auswahl in den Einstellungen.
+ * Doppelte Einträge fallen weg: iOS meldet dieselbe Stimme oft mehrfach.
+ */
 export function germanVoices() {
   refreshVoices();
-  return voices.map((voice) => ({ uri: voice.voiceURI, name: voice.name, lang: voice.lang }));
+  const seen = new Set();
+  const list = [];
+  for (const voice of voices) {
+    const quality = voiceQuality(voice.voiceURI);
+    const key = `${voice.name}|${quality}|${voice.lang}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    list.push({ uri: voice.voiceURI, name: voice.name, lang: voice.lang, quality });
+  }
+  return list;
 }
 
 /** Wird aufgerufen, wenn das Gerät neue Stimmen meldet. */

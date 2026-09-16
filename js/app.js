@@ -8,14 +8,14 @@ import { createPlanner } from './planner.js?v=1.3';
 import { fetchRoutes, fetchSpeedLimits } from './routing.js?v=1.4';
 import { findRoundTrips } from './tours.js?v=1.4';
 import { Navigation, maneuverIcon, maneuverShort, maneuverTitle } from './navigation.js?v=1.4';
-import { germanVoices, onVoicesChanged, setMuted, setVoice, speak, unlockVoice, voiceSupported } from './voice.js?v=1.7.1';
+import { germanVoices, onVoicesChanged, setMuted, setVoice, speak, unlockVoice, voiceSupported } from './voice.js?v=1.7.2';
 import { RideStats } from './ride-stats.js?v=1.6';
 import { deleteRide, loadRides, migrateLegacyRide, rideFileTitle, rideGPX, rideTotals, saveRide, trackGeoJSON } from './rides.js?v=1.7';
 import { isNightAt } from './sun.js?v=1.7';
 import { describeWeather, fetchWeather, rainSummary } from './weather.js?v=1.5';
 import * as spotify from './spotify.js?v=1.6';
 
-const APP_VERSION = '1.7.1';
+const APP_VERSION = '1.7.2';
 const VOICE_SAMPLE = 'In dreihundert Metern rechts abbiegen.';
 const SPEED_BEEP_REPEAT_MS = 45000; // bei dauerhaft zu schnell nicht öfter piepen
 const AUTO_THEME_CHECK_MS = 60000; // so oft prüfen, ob es dämmert
@@ -1134,12 +1134,14 @@ function renderShareButton() {
   $('btn-share-location').hidden = !state.mode;
 }
 
-const VOICE_HINT_MORE = 'Weitere Stimmen lädst du am iPhone unter Einstellungen → Bedienungshilfen → Gesprochene Inhalte → Stimmen → Deutsch. Sie erscheinen danach hier.';
+const VOICE_HINT_MORE =
+  'Neue Stimmen holst du dir am iPhone kostenlos: Einstellungen → Bedienungshilfen → Gesprochene Inhalte (heißt je nach iOS „Vorlesen“) → Stimmen → Deutsch. Dort eine Stimme antippen und laden, danach MotoDash einmal ganz schließen und neu öffnen.';
 
-/** Aus „Eddy (Deutsch (Deutschland))“ wird „Eddy“; andere Länder bekommen ihr Kürzel dazu. */
-function voiceName({ name, lang }) {
+/** Aus „Eddy (Deutsch (Deutschland))“ wird „Eddy“; Güte und fremdes Land kommen dazu. */
+function voiceName({ name, lang, quality }) {
   const short = name.replace(/\s*\((deutsch|german)[\s\S]*$/i, '').trim() || name;
-  return lang === 'de-DE' ? short : `${short} (${lang})`;
+  const extras = [quality, lang === 'de-DE' ? '' : lang].filter(Boolean).join(', ');
+  return extras ? `${short} (${extras})` : short;
 }
 
 function renderVoiceSetting() {
@@ -1150,9 +1152,12 @@ function renderVoiceSetting() {
   select.value = voices.some((voice) => voice.uri === settings.voice) ? settings.voice : '';
   select.disabled = !voices.length;
   $('voice-test').disabled = !voiceSupported;
-  $('voice-hint').textContent = voices.length
-    ? `Welche Stimme die Abbiegehinweise sagt. ${VOICE_HINT_MORE}`
-    : `Dein Gerät meldet gerade keine deutsche Stimme. ${VOICE_HINT_MORE}`;
+  if (voices.length > 1) {
+    $('voice-hint').textContent = `Welche Stimme die Abbiegehinweise sagt. ${VOICE_HINT_MORE}`;
+  } else {
+    const only = voices.length ? `Dein Gerät hat nur die Stimme „${voiceName(voices[0])}“.` : 'Dein Gerät meldet gerade keine deutsche Stimme.';
+    $('voice-hint').textContent = `${only} ${VOICE_HINT_MORE}`;
+  }
 }
 
 function renderThemeSetting() {
