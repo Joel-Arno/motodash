@@ -51,6 +51,56 @@ function writeRides(rides) {
   }
 }
 
+/** Zahlen über alle Aufnahmen – für den Kopf des Fahrtenbuchs. */
+export function rideTotals(rides) {
+  const monthStart = new Date();
+  monthStart.setDate(1);
+  monthStart.setHours(0, 0, 0, 0);
+
+  let meters = 0;
+  let monthMeters = 0;
+  let longestMeters = 0;
+  let maxLean = 0;
+  for (const ride of rides) {
+    meters += ride.meters;
+    if (ride.startedAt >= monthStart.valueOf()) monthMeters += ride.meters;
+    longestMeters = Math.max(longestMeters, ride.meters);
+    maxLean = Math.max(maxLean, ride.maxLeanLeft ?? 0, ride.maxLeanRight ?? 0);
+  }
+  return { count: rides.length, meters, monthMeters, longestMeters, maxLean };
+}
+
+/** Aufnahme als GPX-Datei – lässt sich teilen und in anderen Karten-Apps öffnen. */
+export function rideGPX(ride) {
+  const points = ride.track
+    .map(([lng, lat]) => `    <trkpt lat="${lat.toFixed(5)}" lon="${lng.toFixed(5)}"/>`)
+    .join('\n');
+  // Einzelne Zeitstempel speichern wir nicht – nur Start und Ende der Fahrt.
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="MotoDash" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata>
+    <name>${escapeXml(rideFileTitle(ride))}</name>
+    <time>${new Date(ride.startedAt).toISOString()}</time>
+  </metadata>
+  <trk>
+    <name>${escapeXml(rideFileTitle(ride))}</name>
+    <trkseg>
+${points}
+    </trkseg>
+  </trk>
+</gpx>
+`;
+}
+
+/** Name für Datei und Titel, z. B. „Rundtour 16.09.2026“. */
+export function rideFileTitle(ride) {
+  const date = new Date(ride.startedAt).toLocaleDateString('de-DE');
+  return `${ride.title ?? 'Fahrt'} ${date}`;
+}
+
+const escapeXml = (text) =>
+  text.replace(/[<>&'"]/g, (char) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', "'": '&apos;', '"': '&quot;' })[char]);
+
 /**
  * Linie für die Karte: Abschnitte mit Tempo (zum Einfärben), Start/Ziel-Punkte und Ausschnitt.
  * @param {[number, number, number][]} track [lng, lat, km/h]

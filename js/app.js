@@ -10,11 +10,14 @@ import { findRoundTrips } from './tours.js?v=1.4';
 import { Navigation, maneuverIcon, maneuverShort, maneuverTitle } from './navigation.js?v=1.4';
 import { setMuted, speak, unlockVoice, voiceSupported } from './voice.js?v=1.4';
 import { RideStats } from './ride-stats.js?v=1.6';
-import { deleteRide, loadRides, migrateLegacyRide, saveRide, trackGeoJSON } from './rides.js?v=1.6';
+import { deleteRide, loadRides, migrateLegacyRide, rideFileTitle, rideGPX, rideTotals, saveRide, trackGeoJSON } from './rides.js?v=1.7';
+import { isNightAt } from './sun.js?v=1.7';
 import { describeWeather, fetchWeather, rainSummary } from './weather.js?v=1.5';
 import * as spotify from './spotify.js?v=1.6';
 
-const APP_VERSION = '1.6.2';
+const APP_VERSION = '1.7';
+const SPEED_BEEP_REPEAT_MS = 45000; // bei dauerhaft zu schnell nicht öfter piepen
+const AUTO_THEME_CHECK_MS = 60000; // so oft prüfen, ob es dämmert
 const WEATHER_REFRESH_MS = 10 * 60 * 1000;
 const WEATHER_MOVE_METERS = 10000; // nach so viel Strecke neu abfragen
 const MUSIC_POLL_MS = 5000;
@@ -196,12 +199,12 @@ function init() {
   });
 
   $('btn-theme').addEventListener('click', () => {
-    settings.theme = settings.theme === 'night' ? 'day' : 'night';
-    saveSettings();
-    applyTheme();
-    renderButtons();
-    map.setStyle(buildStyle(settings.theme, { route: routeGeoJSON(), doneFraction: routeState.doneFraction }));
+    // Von Hand umschalten heißt: ab jetzt fest, nicht mehr automatisch.
+    settings.themeMode = settings.theme === 'night' ? 'day' : 'night';
+    setTheme(settings.themeMode);
+    renderThemeSetting();
   });
+  $('btn-share-location').addEventListener('click', shareLocation);
 
   planner = createPlanner({
     getOrigin: currentPosition,
@@ -244,6 +247,7 @@ function init() {
   });
   $('btn-record').addEventListener('click', onRecordTap);
   $('summary-close').addEventListener('click', closeRideSummary);
+  $('summary-share').addEventListener('click', shareRide);
   $('summary-delete').addEventListener('click', onDeleteRideTap);
   $('rides-close').addEventListener('click', () => ($('rides-sheet').hidden = true));
   migrateLegacyRide();
@@ -274,6 +278,23 @@ function init() {
       applyLayout();
     });
   });
+  document.querySelectorAll('[data-theme-option]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      settings.themeMode = btn.dataset.themeOption;
+      saveSettings();
+      renderThemeSetting();
+      if (settings.themeMode === 'auto') refreshAutoTheme({ force: true });
+      else setTheme(settings.themeMode);
+    });
+  });
+  document.querySelectorAll('[data-beep-option]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      settings.speedBeep = btn.dataset.beepOption === 'on';
+      saveSettings();
+      renderBeepSetting();
+      if (settings.speedBeep) beep(1); // einmal vorhören
+    });
+  });
 
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState !== 'visible') return;
@@ -301,8 +322,10 @@ function start(mode) {
   setFollow(true);
   requestWakeLock();
   unlockVoice(); // passiert im Tipp auf „Losfahren“ – danach darf iOS jederzeit sprechen
+  unlockAudio();
   setTimeout(collapseAttribution, 8000);
   renderRecordButton();
+  renderShareButton();
   startMusicPolling();
 
   if (mode === 'live') {
@@ -350,6 +373,7 @@ function stop() {
   $('demo-badge').hidden = true;
   $('start').hidden = false;
   renderRecordButton();
+  renderShareButton();
 }
 
 // ---------- Position ----------
@@ -773,6 +797,7 @@ function renderSpeedLimit(limit) {
   const tooFast = Boolean(limit) && state.speedKmh >= limit + Math.max(5, limit * 0.1);
   sign.classList.toggle('is-over', tooFast);
   $('speed').classList.toggle('is-over', tooFast);
+  maybeBeepTooFast(tooFast);
 }
 
 /** Gefahrenen Teil der Route grau färben. */
@@ -957,11 +982,112 @@ function releaseWakeLock() {
   setChip('display', 'off', 'Display');
 }
 
+// ---------- Ton, Tag/Nacht und Teilen ----------
+
+let audio = null;
+const overSpeed = { active: false, lastBeepAt: 0 };
+
+/** iOS lässt Töne nur zu, wenn sie aus einem Tipp heraus vorbereitet wurden. */
+function unlockAudio() {
+  try {
+    audio ??= new (window.AudioContext ?? window.webkitAudioContext)();
+    if (audio.state === 'suspended') audio.resume();
+  } catch {
+    audio = null; // ohne Web Audio gibt es eben keinen Ton
+  }
+}
+
+/** Kurzer, hoher Doppelton – fällt unter dem Helm eher auf als ein langer. */
+function beep(times = 2) {
+  unlockAudio();
+  if (!audio) return;
+  for (let i = 0; i < times; i++) {
+    const startAt = audio.currentTime + i * 0.22;
+    const osc = audio.createOscillator();
+    const gain = audio.createGain();
+    osc.type = 'sine';
+    osc.frequency.value = 880;
+    gain.gain.setValueAtTime(0.0001, startAt);
+    gain.gain.exponentialRampToValueAtTime(0.3, startAt + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, startAt + 0.16);
+    osc.connect(gain).connect(audio.destination);
+    osc.start(startAt);
+    osc.stop(startAt + 0.18);
+  }
+}
+
+/** Piepen, sobald man zu schnell wird – danach nur noch ab und zu. */
+function maybeBeepTooFast(tooFast) {
+  if (!tooFast) {
+    overSpeed.active = false;
+    return;
+  }
+  const now = Date.now();
+  const again = !overSpeed.active || now - overSpeed.lastBeepAt > SPEED_BEEP_REPEAT_MS;
+  if (settings.speedBeep && !settings.voiceMuted && again) {
+    beep();
+    overSpeed.lastBeepAt = now;
+  }
+  overSpeed.active = true;
+}
+
+function setTheme(theme) {
+  settings.theme = theme;
+  saveSettings();
+  applyTheme();
+  renderButtons();
+  map.setStyle(buildStyle(settings.theme, { route: routeGeoJSON(), doneFraction: routeState.doneFraction }));
+}
+
+let autoThemeCheckedAt = 0;
+/** Bei „Automatisch“: kurz vor Sonnenuntergang auf dunkel, morgens zurück. */
+function refreshAutoTheme({ force = false } = {}) {
+  if (settings.themeMode !== 'auto') return;
+  const now = Date.now();
+  if (!force && now - autoThemeCheckedAt < AUTO_THEME_CHECK_MS) return;
+  autoThemeCheckedAt = now;
+  const position = currentPosition();
+  if (!position) return; // ohne Standort bleibt die zuletzt gewählte Ansicht
+  const night = isNightAt(new Date(), position.lat, position.lng);
+  if (night == null) return;
+  const wanted = night ? 'night' : 'day';
+  if (wanted !== settings.theme) setTheme(wanted);
+}
+
+/** Standort verschicken – bei Panne oder wenn jemand fragt, wo man gerade ist. */
+async function shareLocation() {
+  const position = currentPosition();
+  if (!position) {
+    showToast('Noch kein Standort', { error: true });
+    return;
+  }
+  const lat = position.lat.toFixed(5);
+  const lng = position.lng.toFixed(5);
+  const link = `https://maps.apple.com/?ll=${lat},${lng}&q=${encodeURIComponent('Mein Standort')}`;
+  const text = `Ich bin hier: ${lat}, ${lng}`;
+  // Ohne Umwege teilen: iOS öffnet das Teilen-Fenster nur direkt nach dem Tippen.
+  if (navigator.share) {
+    try {
+      await navigator.share({ title: 'Mein Standort', text, url: link });
+      return;
+    } catch (err) {
+      if (err.name === 'AbortError') return; // abgebrochen ist kein Fehler
+    }
+  }
+  try {
+    await navigator.clipboard.writeText(`${text}\n${link}`);
+    showToast('Standort kopiert');
+  } catch {
+    showToast('Teilen geht auf diesem Gerät nicht', { error: true });
+  }
+}
+
 // ---------- Oberfläche ----------
 
 function tick() {
   $('clock').textContent = clockFormat.format(new Date());
   renderWeather();
+  refreshAutoTheme();
   $('app').classList.toggle('has-dock', !$('route-info').hidden || !$('music-bar').hidden);
   if (recording) renderRecordButton();
   if (state.mode === 'live' && state.lastFixAt && Date.now() - state.lastFixAt > GPS_STALE_MS) {
@@ -992,10 +1118,28 @@ function renderButtons() {
   $('btn-settings').innerHTML = `${ICONS.settings}<span>Einstellungen</span>`;
 }
 
+function renderShareButton() {
+  $('btn-share-location').hidden = !state.mode;
+}
+
+function renderThemeSetting() {
+  document.querySelectorAll('[data-theme-option]').forEach((btn) => {
+    btn.setAttribute('aria-checked', String(btn.dataset.themeOption === settings.themeMode));
+  });
+}
+
+function renderBeepSetting() {
+  document.querySelectorAll('[data-beep-option]').forEach((btn) => {
+    btn.setAttribute('aria-checked', String((btn.dataset.beepOption === 'on') === settings.speedBeep));
+  });
+}
+
 function openSettings() {
   $('settings-demo').textContent = state.mode === 'demo' ? 'Demo beenden' : 'Demo-Fahrt starten';
   renderSpotifySetting();
   renderRideSetting();
+  renderThemeSetting();
+  renderBeepSetting();
   $('settings').hidden = false;
 }
 
@@ -1370,6 +1514,7 @@ function showRideSummary(ride) {
   $('sum-lean-right').textContent = `${ride.maxLeanRight}°`;
   $('summary-delete').classList.remove('is-confirm');
   $('summary-delete').textContent = 'Aufnahme löschen';
+  $('summary-share').hidden = !(ride.track?.length > 1);
   $('lean-needle-left').style.transform = 'rotate(0deg)';
   $('lean-needle-right').style.transform = 'rotate(0deg)';
   $('sum-map-wrap').hidden = !(ride.track?.length > 1);
@@ -1462,6 +1607,30 @@ function closeRideSummary() {
   openRideLog(); // zurück zur Liste – neu aufgebaut, falls eine Aufnahme gelöscht wurde
 }
 
+/** Die gefahrene Strecke als GPX-Datei weitergeben (Nachricht, AirDrop, andere Karten-App). */
+async function shareRide() {
+  if (!(summaryRide?.track?.length > 1)) return;
+  const title = rideFileTitle(summaryRide);
+  const name = `${title.replace(/[\\/:*?"<>|]/g, '-')}.gpx`;
+  const file = new File([rideGPX(summaryRide)], name, { type: 'application/gpx+xml' });
+
+  if (navigator.canShare?.({ files: [file] })) {
+    try {
+      await navigator.share({ files: [file], title });
+      return;
+    } catch (err) {
+      if (err.name === 'AbortError') return;
+    }
+  }
+  // Sonst als Datei herunterladen.
+  const url = URL.createObjectURL(file);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = name;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+
 /** Löschen erst beim zweiten Tippen. */
 function onDeleteRideTap() {
   const button = $('summary-delete');
@@ -1487,6 +1656,7 @@ function openRideLog() {
 function renderRideLog() {
   const rides = loadRides();
   $('rides-empty').hidden = rides.length > 0;
+  renderRideTotals(rides);
   $('rides-list').replaceChildren(
     ...rides.map((ride) => {
       const row = document.createElement('li');
@@ -1505,6 +1675,17 @@ function renderRideLog() {
       return row;
     }),
   );
+}
+
+/** Zahlen über alle Aufnahmen im Kopf des Fahrtenbuchs. */
+function renderRideTotals(rides) {
+  $('rides-totals').hidden = !rides.length;
+  if (!rides.length) return;
+  const totals = rideTotals(rides);
+  $('total-month').textContent = formatDistance(totals.monthMeters);
+  $('total-all').textContent = formatDistance(totals.meters);
+  $('total-longest').textContent = formatDistance(totals.longestMeters);
+  $('total-lean').textContent = `${Math.round(totals.maxLean)}°`;
 }
 
 /** Cockpit-Seite im Querformat (links/rechts). */
@@ -1539,15 +1720,21 @@ function hideStartError() {
 
 function loadSettings() {
   const defaults = {
-    theme: 'night',
+    theme: 'night', // gerade gezeigte Ansicht
+    themeMode: 'night', // 'day' | 'night' | 'auto' (nach Sonnenstand)
     view: 'heading',
     cockpit: 'right',
     route: { avoidHighways: false, avoidTolls: false, avoidFerries: false },
     plan: { mode: 'dest', unit: 'km', km: 100, hours: 2, direction: null },
     voiceMuted: false,
+    speedBeep: true,
   };
   try {
-    return { ...defaults, ...JSON.parse(localStorage.getItem(SETTINGS_KEY)) };
+    const stored = JSON.parse(localStorage.getItem(SETTINGS_KEY)) ?? {};
+    const settings = { ...defaults, ...stored };
+    // Ältere Fassungen kannten nur Tag/Nacht – die letzte Wahl bleibt die feste Einstellung.
+    if (!stored.themeMode) settings.themeMode = settings.theme;
+    return settings;
   } catch {
     return defaults;
   }
