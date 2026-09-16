@@ -13,8 +13,8 @@
   <link rel="icon" href="icons/icon-192.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@6.9.1/dist/maplibre-gl.css">
-  <link rel="stylesheet" href="css/style.css?v=1.6.2">
-  <script type="module" src="js/app.js?v=1.6.2"></script>
+  <link rel="stylesheet" href="css/style.css?v=1.7">
+  <script type="module" src="js/app.js?v=1.7"></script>
 </head>
 <body>
   <div id="app">
@@ -94,6 +94,9 @@
       <div class="fabs">
         <button id="btn-record" class="fab fab-record" aria-label="Aufnahme starten" hidden></button>
         <button id="btn-voice" class="fab" aria-label="Sprachansagen" hidden></button>
+        <button id="btn-share-location" class="fab" aria-label="Standort teilen" hidden>
+          <svg class="i" viewBox="0 0 24 24"><path d="M12 3v11M8 7l4-4 4 4"/><path d="M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"/></svg>
+        </button>
         <button id="btn-zoom-in" class="fab" aria-label="Hineinzoomen">
           <svg class="i" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
         </button>
@@ -158,6 +161,25 @@
             <svg viewBox="0 0 36 22" aria-hidden="true"><rect x="1" y="1" width="34" height="20" rx="3"/><rect class="fill" x="23" y="3" width="10" height="16" rx="1.5"/></svg>
             <span>Rechts</span>
           </button>
+        </div>
+      </section>
+
+      <section class="setting">
+        <div class="setting-title">Tag- und Nachtansicht</div>
+        <div class="setting-hint">„Automatisch“ schaltet kurz vor Sonnenuntergang auf dunkel und morgens zurück.</div>
+        <div class="segmented segmented-3" role="radiogroup" aria-label="Tag- und Nachtansicht">
+          <button role="radio" data-theme-option="day">Tag</button>
+          <button role="radio" data-theme-option="night">Nacht</button>
+          <button role="radio" data-theme-option="auto">Automatisch</button>
+        </div>
+      </section>
+
+      <section class="setting">
+        <div class="setting-title">Ton bei zu schnell</div>
+        <div class="setting-hint">Kurzer Ton, wenn du deutlich über dem Tempolimit bist. Der Stumm-Knopf auf der Karte schaltet ihn mit ab.</div>
+        <div class="segmented" role="radiogroup" aria-label="Ton bei zu schnell">
+          <button role="radio" data-beep-option="on">An</button>
+          <button role="radio" data-beep-option="off">Aus</button>
         </div>
       </section>
 
@@ -239,6 +261,7 @@
         <div class="lean-side"><span>Rechts</span><b id="sum-lean-right">–</b></div>
       </div>
       <p class="note">Berechnet aus Tempo und Kurvenradius – ein Richtwert, keine Messung.</p>
+      <button id="summary-share" class="btn btn-secondary setting-btn" hidden>Fahrt teilen</button>
       <button id="summary-delete" class="btn btn-secondary setting-btn summary-delete">Aufnahme löschen</button>
     </div>
   </div>
@@ -250,6 +273,12 @@
         <button id="rides-close" class="sheet-close">Fertig</button>
       </div>
       <p id="rides-empty" class="note">Noch keine Aufnahmen.</p>
+      <div id="rides-totals" class="rides-totals" hidden>
+        <div class="total-tile"><span>Diesen Monat</span><b id="total-month">–</b></div>
+        <div class="total-tile"><span>Insgesamt</span><b id="total-all">–</b></div>
+        <div class="total-tile"><span>Längste Fahrt</span><b id="total-longest">–</b></div>
+        <div class="total-tile"><span>Max. Schräglage</span><b id="total-lean">–</b></div>
+      </div>
       <ul id="rides-list" class="rides-list"></ul>
       <p class="sheet-foot">Gespeichert nur auf diesem Gerät · bis zu 50 Aufnahmen</p>
     </div>
