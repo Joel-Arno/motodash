@@ -1518,6 +1518,25 @@ svg.i {
   margin-bottom: 16px;
 }
 
+/* Tankstelle & Co. über der Zielplanung – eine Zeile, notfalls seitlich scrollbar. */
+.category-row {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  margin: 0 0 14px;
+  padding-bottom: 2px;
+  scrollbar-width: none;
+}
+
+.category-row::-webkit-scrollbar {
+  display: none;
+}
+
+.category-row .chip-btn {
+  flex: none;
+  background: var(--panel);
+  border: 2px solid var(--line);
+}
+
 .chip-btn {
   min-height: 44px;
   padding: 0 16px;
