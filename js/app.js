@@ -4,7 +4,7 @@ import * as maplibregl from 'https://cdn.jsdelivr.net/npm/maplibre-gl@6.9.1/dist
 import { buildStyle, routeDoneGradient } from './map-style.js?v=1.4';
 import { DemoRide } from './demo.js?v=1.2.1';
 import { angleDiff, bearing, distance } from './geo.js?v=1.2.1';
-import { createPlanner } from './planner.js?v=1.3';
+import { createPlanner } from './planner.js?v=1.9';
 import { fetchRoutes, fetchSpeedLimits } from './routing.js?v=1.4';
 import { findRoundTrips } from './tours.js?v=1.4';
 import { Navigation, maneuverIcon, maneuverShort, maneuverTitle } from './navigation.js?v=1.4';
@@ -15,7 +15,7 @@ import { isNightAt } from './sun.js?v=1.7';
 import { describeWeather, fetchWeather, rainSummary } from './weather.js?v=1.5';
 import * as spotify from './spotify.js?v=1.6';
 
-const APP_VERSION = '1.8';
+const APP_VERSION = '1.9';
 const VOICE_SAMPLE = 'In dreihundert Metern rechts abbiegen.';
 const SPEED_BEEP_REPEAT_MS = 45000; // bei dauerhaft zu schnell nicht öfter piepen
 const AUTO_THEME_CHECK_MS = 60000; // so oft prüfen, ob es dämmert
@@ -242,6 +242,8 @@ function init() {
     plan: settings.plan,
     onPlanChange: saveSettings,
     onTourCalculate: showTourChoices,
+    getRouteContext,
+    onQuickStop: insertStop,
   });
   $('route-reroll').addEventListener('click', rerollTours);
   $('btn-route').addEventListener('click', () => planner.open());
@@ -743,6 +745,49 @@ function updateNavigation() {
 
   renderBanner(status);
   if (status.speech) speak(status.speech.text, { interrupt: status.speech.interrupt });
+}
+
+/**
+ * Route, entlang der nach Tankstelle & Co. gesucht wird: die laufende, sonst die gerade gewählte.
+ * `active` heißt: ein Halt kann sofort eingefügt werden.
+ */
+function getRouteContext() {
+  const { phase, nav, routes, selected } = routeState;
+  if (phase === 'active' && nav) return { route: nav.route, fromAlong: nav.progress.along, active: true };
+  if (phase === 'choose' && routes[selected]) return { route: routes[selected], fromAlong: 0, active: false };
+  return null;
+}
+
+/** Tankstelle o. Ä. in die laufende Route einfügen – danach geht es zum eigentlichen Ziel weiter. */
+async function insertStop(place) {
+  const { nav } = routeState;
+  const origin = currentPosition();
+  if (routeState.phase !== 'active' || !nav || !origin) return;
+
+  showToast(`${place.title} wird eingeplant …`);
+  try {
+    const targets = nav.remainingWaypoints().map(({ lng, lat, via }) => ({ lng, lat, via }));
+    const [route] = await fetchRoutes([origin, { lng: place.lng, lat: place.lat }, ...targets], nav.route.options);
+    if (routeState.phase !== 'active' || routeState.nav !== nav) return; // Route inzwischen beendet
+    routeState.routes = [route];
+    routeState.selected = 0;
+    // Der Halt kommt vor das bisherige Ziel (bei Rundtouren vor die Zielfahne am Start).
+    routeState.stops.splice(Math.max(0, routeState.stops.length - 1), 0, {
+      title: place.title,
+      subtitle: place.subtitle,
+      lng: place.lng,
+      lat: place.lat,
+    });
+    activateRoute(route);
+    renderRoute();
+    renderStopMarkers();
+    if (state.mode === 'demo') state.demo.followRoute(route.coords);
+    updateNavigation();
+    showToast(`Halt bei ${place.title} eingeplant`);
+    speak(`Zwischenstopp ${place.title} eingeplant.`, { interrupt: true });
+  } catch (err) {
+    showToast(err.message || 'Route konnte nicht neu berechnet werden', { error: true });
+  }
 }
 
 /** Von der Route abgekommen: neue Route zu den noch offenen Zwischenzielen bzw. zurück auf die Rundtour. */

@@ -1,6 +1,7 @@
 // „Ziel“-Fenster: Ziel suchen, Zwischenziele, Favoriten, Rundtouren, Routen-Optionen.
 
 import { reversePlace, searchPlaces } from './search.js?v=1.2.1';
+import { PLACE_CATEGORIES, findPlaces } from './places.js?v=1.9';
 
 const FAVORITES_KEY = 'motodash.favorites';
 const SEARCH_DELAY_MS = 300;
@@ -48,6 +49,8 @@ export function createPlanner({
   plan,
   onPlanChange,
   onTourCalculate,
+  getRouteContext, // laufende/gewählte Route, um entlang davon zu suchen
+  onQuickStop, // Zwischenstopp in eine laufende Route einfügen
 }) {
   const stops = []; // in Fahrreihenfolge, das letzte ist das Ziel
   let favorites = loadFavorites();
@@ -114,6 +117,7 @@ export function createPlanner({
 
   function open() {
     $('planner').hidden = false;
+    renderCategories();
     if (plan.mode === 'tour') showTour();
     else if (stops.length) showPlan();
     else showSearch(0);
@@ -138,6 +142,8 @@ export function createPlanner({
     $('tour-view').hidden = name !== 'tour';
     // Umschalter Ziel/Rundtour – nicht beim Suchen eines Zwischenziels.
     $('plan-tabs').hidden = name === 'search' && stops.length > 0;
+    // Tankstelle & Co. gehören zur Zielplanung, nicht zur Rundtour-Einstellung.
+    $('place-categories').hidden = name === 'tour';
     document.querySelectorAll('[data-plan-mode]').forEach((tab) => {
       tab.setAttribute('aria-selected', String((tab.dataset.planMode === 'tour') === (name === 'tour')));
     });
@@ -267,17 +273,80 @@ export function createPlanner({
     }
   }
 
-  function renderResults(places) {
+  function renderResults(places, context = null) {
     $('search-results').replaceChildren(
       ...places.map((place) =>
         placeRow({
           title: place.title,
-          subtitle: place.subtitle,
-          onSelect: () => selectPlace(place),
+          subtitle: [placeDistance(place), place.subtitle].filter(Boolean).join(' · '),
+          onSelect: () => choosePlace(place, context),
           action: iconButton(ICONS.star, 'Als Favorit speichern', false, () => openFavoriteDialog(place)),
         }),
       ),
     );
+  }
+
+  // ---------- Unterwegs: Tankstelle, Café, Rastplatz ----------
+
+  function renderCategories() {
+    $('place-categories').replaceChildren(
+      ...PLACE_CATEGORIES.map((category) => {
+        const button = document.createElement('button');
+        button.className = 'chip-btn';
+        button.textContent = category.label;
+        button.addEventListener('click', () => runCategorySearch(category));
+        return button;
+      }),
+    );
+  }
+
+  async function runCategorySearch(category) {
+    const context = getRouteContext?.() ?? null;
+    if (stops.length && !context) showSearch(Math.max(0, stops.length - 1));
+    else setView('search');
+    $('planner-title').textContent = category.label;
+    $('planner-back').hidden = stops.length === 0;
+    $('search-input').value = '';
+    $('search-results').replaceChildren();
+    $('favorites-block').hidden = true;
+
+    searchAbort?.abort();
+    searchAbort = new AbortController();
+    const { signal } = searchAbort;
+    setSearchStatus(context?.route ? 'Suche entlang der Route …' : 'Suche in der Nähe …');
+    try {
+      const places = await findPlaces(category, {
+        origin: getOrigin(),
+        route: context?.route,
+        fromAlong: context?.fromAlong,
+        signal,
+      });
+      if (signal.aborted) return;
+      renderResults(places, context);
+      setSearchStatus(places.length ? '' : `Nichts gefunden – ${category.label} scheint hier weit weg zu sein.`);
+    } catch (err) {
+      if (err.name !== 'AbortError') setSearchStatus(err.message);
+    }
+  }
+
+  /** „in 12 km, 400 m Umweg“ bzw. „2,4 km entfernt“ */
+  function placeDistance(place) {
+    if (place.aheadMeters != null) {
+      const detour = place.detourMeters > 150 ? `, ${formatMeters(place.detourMeters)} Umweg` : '';
+      return `in ${formatMeters(place.aheadMeters)}${detour}`;
+    }
+    if (place.distanceMeters != null) return `${formatMeters(place.distanceMeters)} entfernt`;
+    return '';
+  }
+
+  async function choosePlace(place, context) {
+    // Während der Fahrt kommt der Halt sofort in die laufende Route, sonst in die Planung.
+    if (context?.active && onQuickStop) {
+      close();
+      await onQuickStop(place);
+      return;
+    }
+    selectPlace(place);
   }
 
   function setSearchStatus(text) {
@@ -478,6 +547,11 @@ export function createPlanner({
   }
 
   return { open, close, clearStops };
+}
+
+function formatMeters(meters) {
+  if (meters < 950) return `${Math.max(50, Math.round(meters / 50) * 50)} m`;
+  return `${(meters / 1000).toLocaleString('de-DE', { maximumFractionDigits: meters < 9500 ? 1 : 0 })} km`;
 }
 
 function formatHours(hours) {
