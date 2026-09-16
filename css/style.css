@@ -2166,22 +2166,21 @@ svg.i {
   box-shadow: 0 0 0 3px rgba(255, 59, 59, 0.25);
 }
 
+/* Während der Aufnahme bewusst ruhig: normaler Knopf, kleiner roter Punkt, kein Blinken. */
 .fab-record.is-recording {
-  background: #ff3b3b;
-  color: #ffffff;
+  gap: 7px;
+  color: var(--muted);
 }
 
 .fab-record.is-recording .rec-dot {
-  width: 14px;
-  height: 14px;
-  background: #ffffff;
+  width: 11px;
+  height: 11px;
   box-shadow: none;
-  animation: rec-pulse 1.2s ease-in-out infinite;
 }
 
 .rec-time {
-  font-size: 18px;
-  font-weight: 800;
+  font-size: 15px;
+  font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
 
@@ -2194,12 +2193,6 @@ svg.i {
   background: var(--panel);
   color: #ff3b3b;
   border: 2px solid #ff3b3b;
-}
-
-@keyframes rec-pulse {
-  50% {
-    opacity: 0.25;
-  }
 }
 
 /* ---------- Auswertung: Karte & Fahrtenbuch ---------- */
@@ -2284,6 +2277,11 @@ svg.i {
 .ride-row .row-text {
   display: flex;
   flex-direction: column;
+}
+
+/* Datum, Uhrzeit und Dauer sollen in eine Zeile passen. */
+.ride-row .row-sub {
+  font-size: 13px;
 }
 
 .ride-km {
