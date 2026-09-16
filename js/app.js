@@ -4,20 +4,25 @@ import * as maplibregl from 'https://cdn.jsdelivr.net/npm/maplibre-gl@6.9.1/dist
 import { buildStyle, routeDoneGradient } from './map-style.js?v=1.4';
 import { DemoRide } from './demo.js?v=1.2.1';
 import { angleDiff, bearing, distance } from './geo.js?v=1.2.1';
-import { createPlanner } from './planner.js?v=1.9';
-import { fetchRoutes, fetchSpeedLimits } from './routing.js?v=1.4';
+import { createPlanner } from './planner.js?v=2.0';
+import { fetchRoutes, fetchSpeedLimits } from './routing.js?v=2.0';
 import { findRoundTrips } from './tours.js?v=1.4';
 import { Navigation, maneuverIcon, maneuverShort, maneuverTitle } from './navigation.js?v=1.4';
 import { germanVoices, onVoicesChanged, setMuted, setVoice, setVoiceSound, speak, unlockVoice, voiceSupported } from './voice.js?v=1.8';
 import { RideStats } from './ride-stats.js?v=1.6';
-import { deleteRide, loadRides, migrateLegacyRide, rideFileTitle, rideGPX, rideTotals, saveRide, trackGeoJSON } from './rides.js?v=1.7';
+import { deleteRide, loadRides, migrateLegacyRide, renameRide, rideFileTitle, rideGPX, rideTotals, saveRide, trackGeoJSON } from './rides.js?v=2.0';
 import { isNightAt } from './sun.js?v=1.7';
+import { PLACE_CATEGORIES, findPlaces } from './places.js?v=2.0';
 import { describeWeather, fetchWeather, rainSummary } from './weather.js?v=1.5';
 import * as spotify from './spotify.js?v=1.6';
 
-const APP_VERSION = '1.9';
+const APP_VERSION = '2.0';
 const VOICE_SAMPLE = 'In dreihundert Metern rechts abbiegen.';
 const SPEED_BEEP_REPEAT_MS = 45000; // bei dauerhaft zu schnell nicht öfter piepen
+// „Straße gesperrt“: welches Stück der Route vor dem Fahrer gemieden wird
+const BLOCK_FROM_METERS = 40;
+const BLOCK_LENGTH_METERS = 600;
+const BLOCK_POINTS = 4;
 const AUTO_THEME_CHECK_MS = 60000; // so oft prüfen, ob es dämmert
 const WEATHER_REFRESH_MS = 10 * 60 * 1000;
 const WEATHER_MOVE_METERS = 10000; // nach so viel Strecke neu abfragen
@@ -47,6 +52,7 @@ const ICONS = {
   voiceOn: '<svg class="i" viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"/></svg>',
   voiceOff: '<svg class="i" viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M17 9l5 6M22 9l-5 6"/></svg>',
   day: '<svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>',
+  stop: '<svg class="i" viewBox="0 0 24 24"><path d="M12 21s7-6.4 7-11a7 7 0 1 0-14 0c0 4.6 7 11 7 11z"/><circle cx="12" cy="10" r="2.5"/></svg>',
 };
 
 // Abbiegepfeile fürs Navigations-Banner (weiße Linien auf blauem Grund).
@@ -106,7 +112,9 @@ const routeState = {
   rerouteFailed: false,
   lastRerouteAt: 0,
   lastRerouteSpeechAt: 0,
+  blocked: [], // für diese Fahrt gesperrte Stellen
 };
+let enrouteAbort = null;
 const clockFormat = new Intl.DateTimeFormat('de-DE', { hour: '2-digit', minute: '2-digit' });
 
 const weatherState = { data: null, loading: false, failedAt: 0 };
@@ -216,11 +224,13 @@ function init() {
   });
   $('display').addEventListener('click', () => state.mode && requestWakeLock());
 
-  $('btn-view').addEventListener('click', () => {
-    settings.view = settings.view === 'heading' ? 'north' : 'heading';
-    saveSettings();
-    renderButtons();
-    recenter();
+  document.querySelectorAll('[data-view-option]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      settings.view = btn.dataset.viewOption;
+      saveSettings();
+      renderViewSetting();
+      recenter();
+    });
   });
 
   $('btn-theme').addEventListener('click', () => {
@@ -246,7 +256,12 @@ function init() {
     onQuickStop: insertStop,
   });
   $('route-reroll').addEventListener('click', rerollTours);
-  $('btn-route').addEventListener('click', () => planner.open());
+  $('btn-route').addEventListener('click', () => (routeState.phase === 'active' ? openEnroute() : planner.open()));
+  $('enroute-close').addEventListener('click', () => ($('enroute').hidden = true));
+  $('enroute').addEventListener('click', (e) => {
+    if (e.target === e.currentTarget) $('enroute').hidden = true;
+  });
+  $('enroute-block').addEventListener('click', onBlockRoadTap);
   $('route-start').addEventListener('click', startRoute);
   $('route-edit').addEventListener('click', () => planner.open());
   $('route-cancel').addEventListener('click', () => clearRoute({ keepStops: true }));
@@ -258,23 +273,28 @@ function init() {
   $('btn-settings').addEventListener('click', openSettings);
   $('start-settings').addEventListener('click', openSettings);
   $('settings-demo').addEventListener('click', () => {
-    $('settings').hidden = true;
+    closeSettings();
     const wasDemo = state.mode === 'demo';
     if (state.mode) stop();
     if (!wasDemo) start('demo');
   });
   $('spotify-connect').addEventListener('click', onSpotifyButton);
   $('ride-end').addEventListener('click', () => {
-    $('settings').hidden = true;
+    closeSettings();
     stop();
   });
   $('ride-log').addEventListener('click', () => {
-    $('settings').hidden = true;
+    closeSettings();
     openRideLog();
   });
   $('btn-record').addEventListener('click', onRecordTap);
   $('summary-close').addEventListener('click', closeRideSummary);
   $('summary-share').addEventListener('click', shareRide);
+  $('summary-name').addEventListener('change', saveRideName);
+  $('summary-name').addEventListener('blur', saveRideName);
+  $('summary-name').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') e.target.blur();
+  });
   $('summary-delete').addEventListener('click', onDeleteRideTap);
   $('rides-close').addEventListener('click', () => ($('rides-sheet').hidden = true));
   migrateLegacyRide();
@@ -294,9 +314,10 @@ function init() {
   handleSpotifyReturn();
   cleanUpLegacyMutedPause();
 
-  $('settings-close').addEventListener('click', () => ($('settings').hidden = true));
+  $('settings-close').addEventListener('click', closeSettings);
+  $('tilt-toggle').addEventListener('click', toggleTilt);
   $('settings').addEventListener('click', (e) => {
-    if (e.target === e.currentTarget) $('settings').hidden = true;
+    if (e.target === e.currentTarget) closeSettings();
   });
   document.querySelectorAll('[data-cockpit-option]').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -671,6 +692,7 @@ function startRoute() {
   $('route-info').hidden = false;
   $('btn-voice').hidden = !voiceSupported;
   renderVoiceButton();
+  renderButtons(); // „Ziel“ wird zu „Unterwegs“
   renderRoute();
   if (state.mode === 'demo') state.demo.followRoute(route.coords);
   // Im Tipp auf „Starten“ sprechen – so erlaubt iOS auch die späteren Ansagen.
@@ -695,7 +717,18 @@ function activateRoute(route) {
 /** @param keepStops true = Ziele bleiben im Planer zum Bearbeiten erhalten */
 function clearRoute({ keepStops = false } = {}) {
   const endedActiveRoute = routeState.phase === 'active';
-  Object.assign(routeState, { phase: null, routes: [], selected: 0, stops: [], nav: null, tour: null, rerouting: false });
+  Object.assign(routeState, {
+    phase: null,
+    routes: [],
+    selected: 0,
+    stops: [],
+    nav: null,
+    tour: null,
+    rerouting: false,
+    blocked: [], // Sperrungen gelten nur für die eine Fahrt
+  });
+  $('enroute').hidden = true;
+  renderButtons();
   if (!keepStops) planner?.clearStops();
   $('route-chooser').hidden = true;
   $('app').classList.remove('is-choosing', 'is-navigating');
@@ -767,7 +800,8 @@ async function insertStop(place) {
   showToast(`${place.title} wird eingeplant …`);
   try {
     const targets = nav.remainingWaypoints().map(({ lng, lat, via }) => ({ lng, lat, via }));
-    const [route] = await fetchRoutes([origin, { lng: place.lng, lat: place.lat }, ...targets], nav.route.options);
+    const options = { ...nav.route.options, blocked: routeState.blocked };
+    const [route] = await fetchRoutes([origin, { lng: place.lng, lat: place.lat }, ...targets], options);
     if (routeState.phase !== 'active' || routeState.nav !== nav) return; // Route inzwischen beendet
     routeState.routes = [route];
     routeState.selected = 0;
@@ -790,6 +824,146 @@ async function insertStop(place) {
   }
 }
 
+// ---------- Unterwegs: Halt einlegen, Straße sperren ----------
+
+function openEnroute() {
+  $('enroute').hidden = false;
+  $('enroute-results').replaceChildren();
+  setEnrouteStatus('');
+  $('enroute-block').textContent = 'Strecke vor mir sperren';
+  $('enroute-block').classList.remove('is-confirm');
+  $('enroute-categories').replaceChildren(
+    ...PLACE_CATEGORIES.map((category) => {
+      const button = document.createElement('button');
+      button.className = 'chip-btn';
+      button.textContent = category.label;
+      button.addEventListener('click', () => searchEnroute(category));
+      return button;
+    }),
+  );
+}
+
+function setEnrouteStatus(text) {
+  $('enroute-status').textContent = text;
+  $('enroute-status').hidden = !text;
+}
+
+async function searchEnroute(category) {
+  const context = getRouteContext();
+  enrouteAbort?.abort();
+  enrouteAbort = new AbortController();
+  const { signal } = enrouteAbort;
+  $('enroute-results').replaceChildren();
+  setEnrouteStatus(context?.route ? 'Suche entlang der Route …' : 'Suche in der Nähe …');
+  try {
+    const places = await findPlaces(category, {
+      origin: currentPosition(),
+      route: context?.route,
+      fromAlong: context?.fromAlong,
+      signal,
+    });
+    if (signal.aborted) return;
+    $('enroute-results').replaceChildren(...places.map((place) => enrouteRow(place)));
+    setEnrouteStatus(places.length ? '' : `Nichts gefunden – ${category.label} scheint hier weit weg zu sein.`);
+  } catch (err) {
+    if (err.name !== 'AbortError') setEnrouteStatus(err.message);
+  }
+}
+
+function enrouteRow(place) {
+  const row = document.createElement('li');
+  row.className = 'place-row';
+  const button = document.createElement('button');
+  button.className = 'place-main';
+  button.innerHTML = '<div class="row-text"><div class="row-title"></div><div class="row-sub"></div></div>';
+  button.querySelector('.row-title').textContent = place.title;
+  button.querySelector('.row-sub').textContent = [enrouteDistance(place), place.subtitle].filter(Boolean).join(' · ');
+  button.addEventListener('click', () => {
+    $('enroute').hidden = true;
+    insertStop(place);
+  });
+  row.append(button);
+  return row;
+}
+
+function enrouteDistance(place) {
+  if (place.aheadMeters != null) {
+    const detour = place.detourMeters > 150 ? `, ${formatDistance(place.detourMeters)} Umweg` : '';
+    return `in ${formatDistance(place.aheadMeters)}${detour}`;
+  }
+  return place.distanceMeters != null ? `${formatDistance(place.distanceMeters)} entfernt` : '';
+}
+
+/** Sperren erst beim zweiten Tippen – die Route wird dabei komplett neu berechnet. */
+function onBlockRoadTap() {
+  const button = $('enroute-block');
+  if (!button.classList.contains('is-confirm')) {
+    button.classList.add('is-confirm');
+    button.textContent = 'Wirklich sperren?';
+    setTimeout(() => {
+      button.classList.remove('is-confirm');
+      button.textContent = 'Strecke vor mir sperren';
+    }, 4000);
+    return;
+  }
+  button.classList.remove('is-confirm');
+  button.textContent = 'Strecke vor mir sperren';
+  $('enroute').hidden = true;
+  blockRoadAhead();
+}
+
+/** Das Stück Strecke direkt vor dem Fahrer für diese Fahrt meiden. */
+async function blockRoadAhead() {
+  const { nav } = routeState;
+  const origin = currentPosition();
+  if (routeState.phase !== 'active' || !nav || !origin) return;
+
+  const from = nav.progress.along + BLOCK_FROM_METERS;
+  const points = [];
+  for (let i = 0; i < BLOCK_POINTS; i++) {
+    const at = from + (BLOCK_LENGTH_METERS / BLOCK_POINTS) * i;
+    if (at >= nav.route.cumulative.at(-1)) break;
+    points.push(pointOnRoute(nav.route, at));
+  }
+  if (!points.length) {
+    showToast('Vor dir liegt nichts mehr zum Sperren', { error: true });
+    return;
+  }
+
+  const blocked = [...routeState.blocked, ...points];
+  showToast('Strecke gesperrt – ich suche eine Ausweichroute …');
+  speak('Strecke gesperrt. Route wird neu berechnet.', { interrupt: true });
+  try {
+    const options = { ...nav.route.options, blocked };
+    const targets = nav.remainingWaypoints().map(({ lng, lat, via }) => ({ lng, lat, via }));
+    const [route] = await fetchRoutes([origin, ...targets], options);
+    if (routeState.phase !== 'active' || routeState.nav !== nav) return;
+    routeState.blocked = blocked;
+    routeState.routes = [route];
+    routeState.selected = 0;
+    activateRoute(route);
+    renderRoute();
+    if (state.mode === 'demo') state.demo.followRoute(route.coords);
+    updateNavigation();
+    showToast('Neue Route berechnet');
+  } catch (err) {
+    showToast(err.message || 'Keine Ausweichroute gefunden', { error: true });
+  }
+}
+
+/** Punkt auf der Route nach so vielen Metern Fahrstrecke. */
+function pointOnRoute(route, meters) {
+  const { coords, cumulative } = route;
+  let i = 0;
+  while (i < cumulative.length - 2 && cumulative[i + 1] < meters) i++;
+  const segment = cumulative[i + 1] - cumulative[i];
+  const t = segment > 0 ? (meters - cumulative[i]) / segment : 0;
+  return {
+    lng: coords[i][0] + (coords[i + 1][0] - coords[i][0]) * t,
+    lat: coords[i][1] + (coords[i + 1][1] - coords[i][1]) * t,
+  };
+}
+
 /** Von der Route abgekommen: neue Route zu den noch offenen Zwischenzielen bzw. zurück auf die Rundtour. */
 async function reroute() {
   const { nav } = routeState;
@@ -806,7 +980,8 @@ async function reroute() {
 
   try {
     const targets = nav.remainingWaypoints().map(({ lng, lat, via }) => ({ lng, lat, via }));
-    const [route] = await fetchRoutes([origin, ...targets], nav.route.options);
+    const options = { ...nav.route.options, blocked: routeState.blocked };
+    const [route] = await fetchRoutes([origin, ...targets], options);
     if (routeState.phase !== 'active' || routeState.nav !== nav) return; // inzwischen beendet
     routeState.routes = [route];
     routeState.selected = 0;
@@ -1094,7 +1269,8 @@ function maybeBeepTooFast(tooFast) {
   }
   const now = Date.now();
   const again = !overSpeed.active || now - overSpeed.lastBeepAt > SPEED_BEEP_REPEAT_MS;
-  if (settings.speedBeep && !settings.voiceMuted && again) {
+  // Bewusst unabhängig vom Stumm-Knopf: der gilt nur für die Sprachansagen.
+  if (settings.speedBeep && again) {
     beep();
     overSpeed.lastBeepAt = now;
   }
@@ -1159,11 +1335,27 @@ function tick() {
   renderWeather();
   refreshAutoTheme();
   $('app').classList.toggle('has-dock', !$('route-info').hidden || !$('music-bar').hidden);
+  measureOverlays();
   if (recording) renderRecordButton();
   if (state.mode === 'live' && state.lastFixAt && Date.now() - state.lastFixAt > GPS_STALE_MS) {
     setChip('gps', 'bad', 'GPS-Signal schwach');
     $('speed').textContent = '–';
   }
+}
+
+/**
+ * Banner und untere Leiste sind unterschiedlich hoch – ihre Höhe geht als CSS-Größe an die
+ * Knopfreihe, damit die Knöpfe immer dazwischen passen und keiner verdeckt wird.
+ */
+function measureOverlays() {
+  const banner = $('nav-banner');
+  const chooser = $('route-chooser');
+  const top = banner.hidden ? 0 : banner.offsetHeight + 10;
+  const dockElement = !$('route-info').hidden || !$('music-bar').hidden ? document.querySelector('.map-dock') : null;
+  const bottom = Math.max(dockElement?.offsetHeight ?? 0, chooser.hidden ? 0 : chooser.offsetHeight) + (dockElement || !chooser.hidden ? 10 : 0);
+  const root = document.documentElement.style;
+  root.setProperty('--banner-h', `${Math.round(top)}px`);
+  root.setProperty('--dock-h', `${Math.round(bottom)}px`);
 }
 
 /** Quellenangabe nach dem Start zum (i)-Knopf einklappen – sie bleibt per Tippen erreichbar. */
@@ -1180,12 +1372,20 @@ function setChip(id, level, text) {
 }
 
 function renderButtons() {
-  const headingUp = settings.view === 'heading';
   const night = settings.theme === 'night';
-  $('btn-view').innerHTML = `${headingUp ? ICONS.heading : ICONS.north}<span>${headingUp ? 'Fahrtrichtung' : 'Norden oben'}</span>`;
   $('btn-theme').innerHTML = `${night ? ICONS.night : ICONS.day}<span>${night ? 'Nacht' : 'Tag'}</span>`;
-  $('btn-route').innerHTML = `${ICONS.route}<span>Ziel</span>`;
+  // Während der Navigation führt derselbe Knopf zu Halt und Sperrung statt zur Zielsuche.
+  const navigating = routeState.phase === 'active';
+  $('btn-route').innerHTML = navigating
+    ? `${ICONS.stop}<span>Unterwegs</span>`
+    : `${ICONS.route}<span>Ziel</span>`;
   $('btn-settings').innerHTML = `${ICONS.settings}<span>Einstellungen</span>`;
+}
+
+function renderViewSetting() {
+  document.querySelectorAll('[data-view-option]').forEach((btn) => {
+    btn.setAttribute('aria-checked', String(btn.dataset.viewOption === settings.view));
+  });
 }
 
 function renderShareButton() {
@@ -1239,6 +1439,53 @@ function renderVoiceSetting() {
   }
 }
 
+// ---------- Neigungsmesser (nur zum Ausprobieren im Stand) ----------
+
+const tilt = { active: false, handler: null };
+
+async function toggleTilt() {
+  if (tilt.active) {
+    stopTilt();
+    return;
+  }
+  $('tilt-error').hidden = true;
+  try {
+    // iOS fragt beim ersten Mal um Erlaubnis – nur direkt aus dem Tipp heraus möglich.
+    if (typeof DeviceOrientationEvent?.requestPermission === 'function') {
+      const answer = await DeviceOrientationEvent.requestPermission();
+      if (answer !== 'granted') throw new Error('Ohne Zugriff auf die Lagesensoren geht es nicht.');
+    } else if (!('DeviceOrientationEvent' in window)) {
+      throw new Error('Dieses Gerät meldet keine Neigung.');
+    }
+  } catch (err) {
+    $('tilt-error').textContent = err.message ?? 'Die Lagesensoren sind nicht verfügbar.';
+    $('tilt-error').hidden = false;
+    return;
+  }
+
+  tilt.handler = (event) => renderTilt(event.gamma ?? 0);
+  window.addEventListener('deviceorientation', tilt.handler);
+  tilt.active = true;
+  $('tilt-readout').hidden = false;
+  $('tilt-toggle').textContent = 'Neigungsmesser stoppen';
+  renderTilt(0);
+}
+
+function stopTilt() {
+  if (tilt.handler) window.removeEventListener('deviceorientation', tilt.handler);
+  tilt.handler = null;
+  tilt.active = false;
+  $('tilt-readout').hidden = true;
+  $('tilt-toggle').textContent = 'Neigungsmesser starten';
+}
+
+/** @param gamma Neigung zur Seite in Grad (vom Browser) */
+function renderTilt(gamma) {
+  const angle = clamp(Math.round(gamma), -60, 60);
+  $('tilt-value').textContent = `${Math.abs(angle)}°`;
+  $('tilt-needle').style.transform = `rotate(${angle}deg)`;
+}
+
 function renderThemeSetting() {
   document.querySelectorAll('[data-theme-option]').forEach((btn) => {
     btn.setAttribute('aria-checked', String(btn.dataset.themeOption === settings.themeMode));
@@ -1256,9 +1503,15 @@ function openSettings() {
   renderSpotifySetting();
   renderRideSetting();
   renderThemeSetting();
+  renderViewSetting();
   renderBeepSetting();
   renderVoiceSetting();
   $('settings').hidden = false;
+}
+
+function closeSettings() {
+  $('settings').hidden = true;
+  stopTilt(); // Sensor nicht unnötig weiterlaufen lassen
 }
 
 // ---------- Wetter ----------
@@ -1480,6 +1733,7 @@ function renderSpotifySetting(message) {
   $('spotify-hint').textContent = connected
     ? 'Verbunden. Während der Fahrt erscheint unten auf der Karte eine Musik-Leiste, sobald Spotify spielt.'
     : 'Steuert deine Spotify-Wiedergabe (Spotify Premium nötig). Einmalig eine eigene Spotify-App anlegen und die Client-ID hier eintragen.';
+  $('spotify-badge').textContent = connected ? 'verbunden' : '';
   $('spotify-client').hidden = connected;
   if (!$('spotify-client-id').value) $('spotify-client-id').value = spotify.getClientId();
   $('spotify-redirect').textContent = spotify.redirectUri();
@@ -1565,28 +1819,21 @@ function onRecordTap() {
 
 function renderRecordButton() {
   const button = $('btn-record');
-  button.hidden = !state.mode;
+  button.disabled = !state.mode;
   button.classList.toggle('is-recording', Boolean(recording));
   if (!recording) {
-    if (button.dataset.view !== 'idle') {
-      button.dataset.view = 'idle';
-      button.innerHTML = '<span class="rec-dot"></span>';
-      button.setAttribute('aria-label', 'Aufnahme starten');
-    }
+    button.innerHTML = '<span class="rec-dot"></span><span>Aufnahme</span>';
+    button.setAttribute('aria-label', 'Aufnahme starten');
     return;
   }
   if (button.classList.contains('is-confirm')) {
-    button.dataset.view = 'confirm';
-    button.innerHTML = '<span class="rec-label">Stoppen?</span>';
+    button.innerHTML = '<span class="rec-dot"></span><span>Stoppen?</span>';
     button.setAttribute('aria-label', 'Aufnahme beenden');
     return;
   }
-  if (button.dataset.view !== 'recording') {
-    button.dataset.view = 'recording';
-    button.innerHTML = '<span class="rec-dot"></span><span class="rec-time"></span>';
-    button.setAttribute('aria-label', 'Aufnahme läuft – zweimal tippen zum Beenden');
-  }
-  button.querySelector('.rec-time').textContent = formatStopwatch((Date.now() - recording.stats.startedAt) / 1000);
+  const time = formatStopwatch((Date.now() - recording.stats.startedAt) / 1000);
+  button.innerHTML = `<span class="rec-dot"></span><span>${time}</span>`;
+  button.setAttribute('aria-label', 'Aufnahme läuft – zweimal tippen zum Beenden');
 }
 
 function formatStopwatch(totalSeconds) {
@@ -1605,8 +1852,10 @@ function renderRideSetting() {
   if (recording) {
     const current = recording.stats.summary();
     $('ride-hint').textContent = `Aufnahme läuft: ${formatDistance(current.meters)} · ${formatStopwatch(current.totalSeconds)}`;
+    $('ride-badge').textContent = 'Aufnahme läuft';
   } else {
-    $('ride-hint').textContent = 'Aufnahmen startest du mit dem roten ● auf der Karte. Routen werden automatisch aufgenommen.';
+    $('ride-hint').textContent = 'Aufnahmen startest du mit dem Knopf „Aufnahme“ im Cockpit. Routen werden automatisch aufgenommen.';
+    $('ride-badge').textContent = rides.length ? `${rides.length} Aufnahmen` : '';
   }
 }
 
@@ -1620,7 +1869,8 @@ function rideTimeRange(ride) {
 function showRideSummary(ride) {
   if (!ride) return;
   summaryRide = ride;
-  $('summary-title').textContent = ride.title ?? 'Deine Fahrt';
+  $('summary-title').textContent = 'Auswertung';
+  $('summary-name').value = ride.title ?? 'Fahrt';
   $('sum-date').textContent = rideTimeRange(ride);
   $('sum-distance').textContent = formatDistance(ride.meters);
   $('sum-moving').textContent = formatDuration(ride.movingSeconds);
@@ -1723,6 +1973,15 @@ function closeRideSummary() {
   if (!cameFromRideLog) return;
   cameFromRideLog = false;
   openRideLog(); // zurück zur Liste – neu aufgebaut, falls eine Aufnahme gelöscht wurde
+}
+
+/** Namen der Fahrt im Fahrtenbuch speichern. */
+function saveRideName() {
+  if (!summaryRide) return;
+  const name = $('summary-name').value.trim() || 'Fahrt';
+  $('summary-name').value = name;
+  if (name === summaryRide.title) return;
+  summaryRide = renameRide(summaryRide.id, name) ?? { ...summaryRide, title: name };
 }
 
 /** Die gefahrene Strecke als GPX-Datei weitergeben (Nachricht, AirDrop, andere Karten-App). */

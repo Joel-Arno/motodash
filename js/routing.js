@@ -12,7 +12,9 @@ const SILENT_MANEUVER_TYPES = new Set([7, 8, 27]);
 /**
  * @param {{lng:number, lat:number, via?:boolean}[]} points Start, Zwischenziele, Ziel.
  *   `via` = unsichtbarer Wegpunkt, durch den nur hindurchgefahren wird (für Rundtouren).
- * @param {{avoidHighways?:boolean, avoidTolls?:boolean, avoidFerries?:boolean}} options
+ * @param {{avoidHighways?:boolean, avoidTolls?:boolean, avoidFerries?:boolean,
+ *   blocked?:{lng:number, lat:number}[]}} options
+ *   `blocked` = Stellen, die gemieden werden sollen (gesperrte Straße)
  * @returns {Promise<Route[]>} beste Route zuerst, bei nur zwei Punkten bis zu zwei Alternativen
  */
 export async function fetchRoutes(points, options = {}) {
@@ -34,6 +36,9 @@ export async function fetchRoutes(points, options = {}) {
     alternates: points.length === 2 ? 2 : 0,
     language: 'de-DE',
     units: 'kilometers',
+    ...(options.blocked?.length && {
+      exclude_locations: options.blocked.map((p) => ({ lat: p.lat, lon: p.lng })),
+    }),
   };
 
   let response;

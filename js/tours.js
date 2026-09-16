@@ -2,7 +2,7 @@
 // Der Routen-Dienst kann keine Rundtouren – deshalb legen wir unsichtbare Wegpunkte auf einen Kreis,
 // der durch den Start geht, lassen Valhalla die Route berechnen und passen die Kreisgröße bei Bedarf an.
 
-import { fetchRoutes } from './routing.js?v=1.4';
+import { fetchRoutes } from './routing.js?v=2.0';
 
 const START_ROAD_FACTOR = 1.35; // Straßen sind im Schnitt so viel länger als der Kreis
 const TOLERANCE = 0.15; // ±15 % gilt als getroffen, sonst nachjustieren

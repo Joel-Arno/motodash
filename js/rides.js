@@ -26,6 +26,16 @@ export function deleteRide(id) {
   writeRides(loadRides().filter((ride) => ride.id !== id));
 }
 
+/** Aufnahme umbenennen; gibt die geänderte Aufnahme zurück. */
+export function renameRide(id, title) {
+  const rides = loadRides();
+  const ride = rides.find((entry) => entry.id === id);
+  if (!ride) return null;
+  ride.title = title;
+  writeRides(rides);
+  return ride;
+}
+
 /** Die frühere „letzte Fahrt“ (vor dem Fahrtenbuch) einmalig übernehmen. */
 export function migrateLegacyRide() {
   try {

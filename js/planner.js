@@ -1,7 +1,7 @@
 // „Ziel“-Fenster: Ziel suchen, Zwischenziele, Favoriten, Rundtouren, Routen-Optionen.
 
 import { reversePlace, searchPlaces } from './search.js?v=1.2.1';
-import { PLACE_CATEGORIES, findPlaces } from './places.js?v=1.9';
+import { PLACE_CATEGORIES, findPlaces } from './places.js?v=2.0';
 
 const FAVORITES_KEY = 'motodash.favorites';
 const SEARCH_DELAY_MS = 300;
@@ -178,7 +178,7 @@ export function createPlanner({
     $('search-results').replaceChildren();
     setSearchStatus('');
     renderFavorites();
-    $('search-input').focus();
+    // Bewusst kein focus(): die Tastatur soll nicht von selbst aufspringen.
   }
 
   // ---------- Stopps ----------

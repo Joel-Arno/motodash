@@ -2,7 +2,7 @@
 // Quelle ist wie bei der Zielsuche Photon (OpenStreetMap), hier über die Umkreissuche mit Kategorie.
 
 import { distance } from './geo.js?v=1.2.1';
-import { nearestOnRoute } from './routing.js?v=1.4';
+import { nearestOnRoute } from './routing.js?v=2.0';
 
 const PHOTON_URL = 'https://photon.komoot.io/reverse';
 const NEARBY_RADIUS_KM = 10;
@@ -15,6 +15,7 @@ const MAX_RESULTS = 8;
 export const PLACE_CATEGORIES = [
   { id: 'fuel', label: 'Tankstelle', fallback: 'Tankstelle', tags: ['amenity:fuel'] },
   { id: 'cafe', label: 'Café & Bäckerei', fallback: 'Café', tags: ['amenity:cafe', 'shop:bakery'] },
+  { id: 'fastfood', label: 'Fastfood', fallback: 'Imbiss', tags: ['amenity:fast_food'] },
   {
     id: 'rest',
     label: 'Rastplatz & WC',
