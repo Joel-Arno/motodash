@@ -66,6 +66,18 @@ export function createPlanner({
     showSearch(Math.max(0, stops.length - 1));
   });
   $('calc-route').addEventListener('click', calculate);
+  document.querySelectorAll('[data-arrive-option]').forEach((button) => {
+    button.addEventListener('click', () => {
+      plan.arrive = button.dataset.arriveOption;
+      if (plan.arrive === 'time' && !plan.arriveAt) plan.arriveAt = defaultArrival();
+      onPlanChange();
+      renderArrival();
+    });
+  });
+  $('arrive-time').addEventListener('change', () => {
+    plan.arriveAt = $('arrive-time').value;
+    onPlanChange();
+  });
   $('search-input').addEventListener('input', onSearchInput);
   $('search-input').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
@@ -156,7 +168,19 @@ export function createPlanner({
     setView('plan');
     hidePlanError();
     renderStops();
+    renderArrival();
     renderOptions('route-option-list');
+  }
+
+  /** „So schnell wie möglich“ oder Wunsch-Uhrzeit. */
+  function renderArrival() {
+    const byTime = plan.arrive === 'time';
+    document.querySelectorAll('[data-arrive-option]').forEach((button) => {
+      button.setAttribute('aria-checked', String((button.dataset.arriveOption === 'time') === byTime));
+    });
+    $('arrive-row').hidden = !byTime;
+    $('arrive-hint').hidden = !byTime;
+    $('arrive-time').value = plan.arriveAt ?? defaultArrival();
   }
 
   function showTour() {
@@ -527,7 +551,8 @@ export function createPlanner({
     button.disabled = true;
     button.textContent = 'Berechne Route …';
     try {
-      await onCalculate([origin, ...stops], { ...routeOptions });
+      const arriveAt = plan.arrive === 'time' ? arrivalTimestamp(plan.arriveAt) : null;
+      await onCalculate([origin, ...stops], { ...routeOptions }, arriveAt);
       close();
     } catch (err) {
       showPlanError(err.message);
@@ -547,6 +572,23 @@ export function createPlanner({
   }
 
   return { open, close, clearStops };
+}
+
+/** Vorschlag: in einer Stunde, auf 5 Minuten gerundet. */
+function defaultArrival() {
+  const date = new Date(Date.now() + 3600000);
+  date.setMinutes(Math.round(date.getMinutes() / 5) * 5, 0, 0);
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
+
+/** „18:30“ → Zeitpunkt heute; liegt die Zeit schon hinter uns, ist morgen gemeint. */
+function arrivalTimestamp(value) {
+  const [hours, minutes] = (value ?? '').split(':').map(Number);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return null;
+  const date = new Date();
+  date.setHours(hours, minutes, 0, 0);
+  if (date.valueOf() < Date.now()) date.setDate(date.getDate() + 1);
+  return date.valueOf();
 }
 
 function formatMeters(meters) {

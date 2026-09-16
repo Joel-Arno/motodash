@@ -2,7 +2,7 @@
 // Quelle ist wie bei der Zielsuche Photon (OpenStreetMap), hier über die Umkreissuche mit Kategorie.
 
 import { distance } from './geo.js?v=1.2.1';
-import { nearestOnRoute } from './routing.js?v=2.0';
+import { nearestOnRoute } from './routing.js?v=2.1';
 
 const PHOTON_URL = 'https://photon.komoot.io/reverse';
 const NEARBY_RADIUS_KM = 10;

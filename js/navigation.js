@@ -1,7 +1,7 @@
 // Abbiegehinweise während der Fahrt: nächstes Manöver, Zeitpunkt der Ansagen, Abweichung von der Route.
 // Enthält keine Oberfläche – app.js zeigt an und spricht.
 
-import { RouteProgress } from './routing.js?v=2.0';
+import { RouteProgress } from './routing.js?v=2.1';
 
 const PASSED_METERS = 10; // ab hier gilt ein Manöver als erledigt
 const OFF_ROUTE_MIN_METERS = 50;

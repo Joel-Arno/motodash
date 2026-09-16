@@ -39,6 +39,7 @@ const PALETTES = {
     routeAlt: '#5f6a7a',
     routeAltCasing: '#1b2129',
     routeDone: '#56606d',
+    routeStart: '#3ddc84',
   },
   day: {
     background: '#f1f0ea',
@@ -72,6 +73,7 @@ const PALETTES = {
     routeAlt: '#9aa5b3',
     routeAltCasing: '#6f7a88',
     routeDone: '#a3abb5',
+    routeStart: '#12a150',
   },
 };
 
@@ -137,6 +139,13 @@ export function routeDoneGradient(theme, fraction) {
   return ['step', ['line-progress'], p.routeDone, Math.min(1, Math.max(0, fraction)), 'rgba(0, 0, 0, 0)'];
 }
 
+/** Grüner Anfang der Route: bis `fraction` (0…1) grün, danach durchsichtig. */
+export function routeStartGradient(theme, fraction) {
+  const p = PALETTES[theme] ?? PALETTES.night;
+  const end = Math.min(0.999, Math.max(0.001, fraction));
+  return ['step', ['line-progress'], p.routeStart, end, 'rgba(0, 0, 0, 0)'];
+}
+
 // Gewählte Route kräftig, Alternativen grau darunter. Liegt über den Straßen, unter den Beschriftungen.
 function routeLayers(p, theme, doneFraction) {
   const selected = ['==', ['get', 'selected'], true];
@@ -161,6 +170,32 @@ function routeLayers(p, theme, doneFraction) {
       filter: selected,
       layout: { 'line-cap': 'round', 'line-join': 'round' },
       paint: { 'line-gradient': routeDoneGradient(theme, doneFraction), 'line-width': byZoom([[5, 3.5], [14, 9], [18, 22]]) },
+    },
+    // Erstes Stück der Route grün – bei Rundtouren sieht man so, welcher der beiden Striche der Hinweg ist.
+    {
+      id: 'route-start',
+      type: 'line',
+      source: 'route',
+      filter: selected,
+      layout: { 'line-cap': 'round', 'line-join': 'round' },
+      paint: { 'line-gradient': routeStartGradient(theme, 0), 'line-width': byZoom([[5, 3.5], [14, 9], [18, 22]]) },
+    },
+    // Pfeile in Fahrtrichtung auf der gewählten Route.
+    {
+      id: 'route-arrows',
+      type: 'symbol',
+      source: 'route',
+      filter: selected,
+      minzoom: 11,
+      layout: {
+        'symbol-placement': 'line',
+        'symbol-spacing': 130,
+        'icon-image': 'route-arrow',
+        'icon-size': byZoom([[11, 0.6], [14, 0.8], [18, 1]]),
+        'icon-rotation-alignment': 'map',
+        'icon-allow-overlap': true,
+        'icon-ignore-placement': true,
+      },
     },
     // Unsichtbare, breite Linie, damit man Alternativen mit dem Finger leicht antippen kann.
     {

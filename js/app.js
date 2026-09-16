@@ -1,12 +1,13 @@
 import * as maplibregl from 'https://cdn.jsdelivr.net/npm/maplibre-gl@6.9.1/dist/maplibre-gl.mjs';
 // Die ?v=… Anhänge sorgen dafür, dass das iPhone nach einem Update die neuen Dateien lädt.
 // Bei jeder Änderung APP_VERSION erhöhen und bei jeder geänderten Datei deren ?v= überall, wo sie geladen wird.
-import { buildStyle, routeDoneGradient } from './map-style.js?v=1.4';
+import { buildStyle, routeDoneGradient, routeStartGradient } from './map-style.js?v=2.1';
 import { DemoRide } from './demo.js?v=1.2.1';
 import { angleDiff, bearing, distance } from './geo.js?v=1.2.1';
-import { createPlanner } from './planner.js?v=2.0';
-import { fetchRoutes, fetchSpeedLimits } from './routing.js?v=2.0';
-import { findRoundTrips } from './tours.js?v=1.4';
+import { createPlanner } from './planner.js?v=2.1';
+import { fetchRoutes, fetchSpeedLimits } from './routing.js?v=2.1';
+import { findRoundTrips } from './tours.js?v=2.1';
+import { findTimedRoutes } from './timed.js?v=2.1';
 import { Navigation, maneuverIcon, maneuverShort, maneuverTitle } from './navigation.js?v=1.4';
 import { germanVoices, onVoicesChanged, setMuted, setVoice, setVoiceSound, speak, unlockVoice, voiceSupported } from './voice.js?v=1.8';
 import { RideStats } from './ride-stats.js?v=1.6';
@@ -16,10 +17,11 @@ import { PLACE_CATEGORIES, findPlaces } from './places.js?v=2.0';
 import { describeWeather, fetchWeather, rainSummary } from './weather.js?v=1.5';
 import * as spotify from './spotify.js?v=1.6';
 
-const APP_VERSION = '2.0';
+const APP_VERSION = '2.1';
 const VOICE_SAMPLE = 'In dreihundert Metern rechts abbiegen.';
 const SPEED_BEEP_REPEAT_MS = 45000; // bei dauerhaft zu schnell nicht öfter piepen
 // „Straße gesperrt“: welches Stück der Route vor dem Fahrer gemieden wird
+const START_MARK_METERS = 700; // so weit wird der Anfang der Route grün gezeigt
 const BLOCK_FROM_METERS = 40;
 const BLOCK_LENGTH_METERS = 600;
 const BLOCK_POINTS = 4;
@@ -163,6 +165,9 @@ function init() {
   }
 
   map.touchZoomRotate.disableRotation();
+  // Nach jedem Stilwechsel (Tag/Nacht) muss der Richtungspfeil neu angemeldet werden.
+  map.on('style.load', onStyleReady);
+  map.on('load', onStyleReady);
   marker = new maplibregl.Marker({ element: markerEl, rotationAlignment: 'map', pitchAlignment: 'map' });
 
   const container = map.getContainer();
@@ -626,9 +631,21 @@ function zoomBy(delta) {
 
 // ---------- Route ----------
 
-async function showRouteChoices(points, options) {
-  const routes = await fetchRoutes(points, options);
-  presentChoices({ routes, stops: points.slice(1), tour: null });
+/** @param arriveAt gewünschte Ankunft (Zeitstempel) oder null für „so schnell wie möglich“ */
+async function showRouteChoices(points, options, arriveAt = null) {
+  if (!arriveAt) {
+    const routes = await fetchRoutes(points, options);
+    presentChoices({ routes, stops: points.slice(1), tour: null });
+    return;
+  }
+
+  const result = await findTimedRoutes(points, options, (arriveAt - Date.now()) / 1000);
+  presentChoices({ routes: result.routes, stops: points.slice(1), tour: null });
+
+  const tooEarlyMinutes = Math.round((arriveAt - Date.now() - result.routes[0].timeSeconds * 1000) / 60000);
+  if (result.tooShort) showToast('Bis dahin ist es nicht zu schaffen – hier ist die schnellste Route');
+  else if (tooEarlyMinutes > 15) showToast(`Mehr Umweg war nicht drin – du wärst ${tooEarlyMinutes} min früher da`);
+  else if (!result.stretched) showToast('Die schnellste Route passt schon gut zur Zeit');
 }
 
 async function showTourChoices(spec, options, onProgress) {
@@ -1088,8 +1105,63 @@ function routeGeoJSON() {
 
 function renderRoute() {
   const source = map.getSource('route');
-  if (source) source.setData(routeGeoJSON());
-  else map.once('style.load', renderRoute); // Karte lädt noch – danach zeichnen
+  if (!source) {
+    map.once('style.load', renderRoute); // Karte lädt noch – danach zeichnen
+    return;
+  }
+  source.setData(routeGeoJSON());
+  setStartFraction();
+}
+
+/**
+ * Wie viel vom Anfang der Route grün markiert wird. Bei Rundtouren liegen Hin- und Rückweg
+ * am Start oft auf derselben Straße – das grüne Stück zeigt, wo es losgeht.
+ */
+function setStartFraction() {
+  if (!map.getLayer('route-start')) return;
+  const route = routeState.routes[routeState.selected];
+  const show = route && routeState.phase && (routeState.tour || routeState.phase === 'choose');
+  const fraction = show ? Math.min(0.5, START_MARK_METERS / route.shapeMeters) : 0;
+  map.setPaintProperty('route-start', 'line-gradient', routeStartGradient(settings.theme, fraction));
+}
+
+function onStyleReady() {
+  try {
+    ensureArrowImage();
+    setStartFraction();
+  } catch (err) {
+    console.warn('Richtungspfeile nicht verfügbar', err); // ohne Pfeile weiterfahren
+  }
+}
+
+/** Pfeil in Fahrtrichtung – als kleines Bild, das MapLibre entlang der Linie wiederholt. */
+function ensureArrowImage() {
+  if (map.hasImage('route-arrow')) return;
+  const size = 28;
+  const scale = 2;
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size * scale;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(scale, scale);
+  ctx.translate(size / 2, size / 2);
+  ctx.rotate(Math.PI / 2); // Bilder zeigen nach oben, die Linie verläuft nach rechts
+  ctx.beginPath();
+  ctx.moveTo(0, -8);
+  ctx.lineTo(6, 4);
+  ctx.lineTo(0, 1);
+  ctx.lineTo(-6, 4);
+  ctx.closePath();
+  ctx.fillStyle = '#ffffff';
+  ctx.strokeStyle = 'rgba(0, 0, 0, 0.55)';
+  ctx.lineWidth = 1.4;
+  ctx.fill();
+  ctx.stroke();
+  const pixels = ctx.getImageData(0, 0, size * scale, size * scale);
+  map.addImage(
+    'route-arrow',
+    { width: pixels.width, height: pixels.height, data: new Uint8Array(pixels.data.buffer) },
+    { pixelRatio: scale },
+  );
 }
 
 function renderStopMarkers() {
@@ -2102,7 +2174,7 @@ function loadSettings() {
     view: 'heading',
     cockpit: 'right',
     route: { avoidHighways: false, avoidTolls: false, avoidFerries: false },
-    plan: { mode: 'dest', unit: 'km', km: 100, hours: 2, direction: null },
+    plan: { mode: 'dest', unit: 'km', km: 100, hours: 2, direction: null, arrive: 'fast', arriveAt: null },
     voiceMuted: false,
     voice: null, // voiceURI der gewählten Stimme, null = Stimme des Geräts
     voiceRate: 1, // Sprechtempo (1 = normal)

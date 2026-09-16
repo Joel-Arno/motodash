@@ -27,7 +27,7 @@ export async function fetchRoutes(points, options = {}) {
     locations: points.map((p) =>
       p.via
         ? // Nur an richtige Straßen andocken, nicht an Feld- oder Waldwege.
-          { lat: p.lat, lon: p.lng, type: 'through', search_filter: { min_road_class: 'tertiary' } }
+          { lat: p.lat, lon: p.lng, type: 'through', search_filter: { min_road_class: p.roadClass ?? 'tertiary' } }
         : { lat: p.lat, lon: p.lng },
     ),
     costing: 'motorcycle',
