@@ -8,14 +8,14 @@ import { createPlanner } from './planner.js?v=1.3';
 import { fetchRoutes, fetchSpeedLimits } from './routing.js?v=1.4';
 import { findRoundTrips } from './tours.js?v=1.4';
 import { Navigation, maneuverIcon, maneuverShort, maneuverTitle } from './navigation.js?v=1.4';
-import { germanVoices, onVoicesChanged, setMuted, setVoice, speak, unlockVoice, voiceSupported } from './voice.js?v=1.7.2';
+import { germanVoices, onVoicesChanged, setMuted, setVoice, setVoiceSound, speak, unlockVoice, voiceSupported } from './voice.js?v=1.8';
 import { RideStats } from './ride-stats.js?v=1.6';
 import { deleteRide, loadRides, migrateLegacyRide, rideFileTitle, rideGPX, rideTotals, saveRide, trackGeoJSON } from './rides.js?v=1.7';
 import { isNightAt } from './sun.js?v=1.7';
 import { describeWeather, fetchWeather, rainSummary } from './weather.js?v=1.5';
 import * as spotify from './spotify.js?v=1.6';
 
-const APP_VERSION = '1.7.2';
+const APP_VERSION = '1.8';
 const VOICE_SAMPLE = 'In dreihundert Metern rechts abbiegen.';
 const SPEED_BEEP_REPEAT_MS = 45000; // bei dauerhaft zu schnell nicht öfter piepen
 const AUTO_THEME_CHECK_MS = 60000; // so oft prüfen, ob es dämmert
@@ -184,6 +184,7 @@ function init() {
   $('btn-recenter').addEventListener('click', recenter);
   setMuted(settings.voiceMuted);
   setVoice(settings.voice);
+  applyVoiceSound();
   onVoicesChanged(() => {
     if (!$('settings').hidden) renderVoiceSetting(); // iPhone meldet die Stimmen manchmal verzögert
   });
@@ -194,6 +195,18 @@ function init() {
     speak(VOICE_SAMPLE, { force: true });
   });
   $('voice-test').addEventListener('click', () => speak(VOICE_SAMPLE, { force: true }));
+  for (const [id, key] of [['voice-rate', 'voiceRate'], ['voice-pitch', 'voicePitch']]) {
+    // input = Beschriftung mitziehen, change = erst beim Loslassen vorlesen
+    $(id).addEventListener('input', () => {
+      settings[key] = Number($(id).value);
+      applyVoiceSound();
+      renderVoiceSliders();
+    });
+    $(id).addEventListener('change', () => {
+      saveSettings();
+      speak(VOICE_SAMPLE, { force: true });
+    });
+  }
   $('btn-voice').addEventListener('click', () => {
     settings.voiceMuted = !settings.voiceMuted;
     saveSettings();
@@ -1135,7 +1148,7 @@ function renderShareButton() {
 }
 
 const VOICE_HINT_MORE =
-  'Neue Stimmen holst du dir am iPhone kostenlos: Einstellungen → Bedienungshilfen → Gesprochene Inhalte (heißt je nach iOS „Vorlesen“) → Stimmen → Deutsch. Dort eine Stimme antippen und laden, danach MotoDash einmal ganz schließen und neu öffnen.';
+  'Neue Stimmen holst du dir am iPhone kostenlos: in den iPhone-Einstellungen oben im Suchfeld „Stimmen“ eingeben, dort Deutsch wählen und eine Stimme laden. Danach MotoDash einmal ganz schließen und neu öffnen. Tempo und Tonhöhe gelten für jede Stimme.';
 
 /** Aus „Eddy (Deutsch (Deutschland))“ wird „Eddy“; Güte und fremdes Land kommen dazu. */
 function voiceName({ name, lang, quality }) {
@@ -1144,7 +1157,28 @@ function voiceName({ name, lang, quality }) {
   return extras ? `${short} (${extras})` : short;
 }
 
+function applyVoiceSound() {
+  setVoiceSound({ rate: settings.voiceRate, pitch: settings.voicePitch });
+}
+
+/** „langsam“, „normal“, „etwas schneller“ … – Zahlen sagen beim Fahren wenig. */
+function soundLabel(value, [low, high]) {
+  if (value <= 0.75) return low;
+  if (value < 0.95) return `etwas ${low}`;
+  if (value <= 1.05) return 'normal';
+  if (value < 1.35) return `etwas ${high}`;
+  return high;
+}
+
+function renderVoiceSliders() {
+  $('voice-rate').value = String(settings.voiceRate);
+  $('voice-pitch').value = String(settings.voicePitch);
+  $('voice-rate-value').textContent = soundLabel(settings.voiceRate, ['langsamer', 'schneller']);
+  $('voice-pitch-value').textContent = soundLabel(settings.voicePitch, ['tiefer', 'höher']);
+}
+
 function renderVoiceSetting() {
+  renderVoiceSliders();
   const select = $('voice-select');
   const voices = germanVoices();
   select.replaceChildren(new Option('Standard-Stimme', ''), ...voices.map((voice) => new Option(voiceName(voice), voice.uri)));
@@ -1767,6 +1801,8 @@ function loadSettings() {
     plan: { mode: 'dest', unit: 'km', km: 100, hours: 2, direction: null },
     voiceMuted: false,
     voice: null, // voiceURI der gewählten Stimme, null = Stimme des Geräts
+    voiceRate: 1, // Sprechtempo (1 = normal)
+    voicePitch: 1, // Tonhöhe (1 = normal)
     speedBeep: true,
   };
   try {

@@ -4,6 +4,7 @@ let muted = false;
 let voices = []; // alle deutschen Stimmen des Geräts
 let defaultVoice = null;
 let chosenUri = null;
+const sound = { rate: 1, pitch: 1 };
 const listeners = [];
 
 const synth = typeof window !== 'undefined' ? window.speechSynthesis : null;
@@ -64,6 +65,12 @@ export function setVoice(uri) {
   chosenUri = uri || null;
 }
 
+/** Sprechtempo und Tonhöhe (1 = normal). */
+export function setVoiceSound({ rate, pitch }) {
+  if (Number.isFinite(rate)) sound.rate = rate;
+  if (Number.isFinite(pitch)) sound.pitch = pitch;
+}
+
 function currentVoice() {
   if (!voices.length) refreshVoices();
   return voices.find((voice) => voice.voiceURI === chosenUri) ?? defaultVoice;
@@ -85,6 +92,8 @@ export function speak(text, { interrupt = false, force = false } = {}) {
   if (interrupt || force) synth.cancel();
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.lang = 'de-DE';
+  utterance.rate = sound.rate;
+  utterance.pitch = sound.pitch;
   const voice = currentVoice();
   if (voice) {
     utterance.voice = voice;
