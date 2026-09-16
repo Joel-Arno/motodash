@@ -13,8 +13,8 @@
   <link rel="icon" href="icons/icon-192.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@6.9.1/dist/maplibre-gl.css">
-  <link rel="stylesheet" href="css/style.css?v=1.9">
-  <script type="module" src="js/app.js?v=1.9"></script>
+  <link rel="stylesheet" href="css/style.css?v=2.0">
+  <script type="module" src="js/app.js?v=2.0"></script>
 </head>
 <body>
   <div id="app">
@@ -92,7 +92,6 @@
       <div id="toast" class="toast" role="status" hidden></div>
 
       <div class="fabs">
-        <button id="btn-record" class="fab fab-record" aria-label="Aufnahme starten" hidden></button>
         <button id="btn-voice" class="fab" aria-label="Sprachansagen" hidden></button>
         <button id="btn-share-location" class="fab" aria-label="Standort teilen" hidden>
           <svg class="i" viewBox="0 0 24 24"><path d="M12 3v11M8 7l4-4 4 4"/><path d="M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"/></svg>
@@ -134,7 +133,7 @@
       </div>
 
       <div class="actions">
-        <button id="btn-view" class="action"></button>
+        <button id="btn-record" class="action action-record" aria-label="Aufnahme starten"></button>
         <button id="btn-theme" class="action"></button>
         <button id="btn-route" class="action action-route"></button>
         <button id="btn-settings" class="action action-settings" aria-label="Einstellungen"></button>
@@ -149,80 +148,118 @@
         <button id="settings-close" class="sheet-close">Fertig</button>
       </div>
 
-      <section class="setting">
-        <div class="setting-title">Cockpit im Querformat</div>
-        <div class="setting-hint">Auf welcher Seite Tempo, Uhrzeit und Knöpfe stehen.</div>
-        <div class="segmented" role="radiogroup" aria-label="Cockpit im Querformat">
-          <button role="radio" data-cockpit-option="left">
-            <svg viewBox="0 0 36 22" aria-hidden="true"><rect x="1" y="1" width="34" height="20" rx="3"/><rect class="fill" x="3" y="3" width="10" height="16" rx="1.5"/></svg>
-            <span>Links</span>
-          </button>
-          <button role="radio" data-cockpit-option="right">
-            <svg viewBox="0 0 36 22" aria-hidden="true"><rect x="1" y="1" width="34" height="20" rx="3"/><rect class="fill" x="23" y="3" width="10" height="16" rx="1.5"/></svg>
-            <span>Rechts</span>
-          </button>
-        </div>
-      </section>
+      <details class="group" open>
+        <summary class="group-head">Fahrt<span class="group-note" id="ride-badge"></span></summary>
+        <section class="setting">
+          <div id="ride-hint" class="setting-hint"></div>
+          <button id="ride-end" class="btn btn-secondary setting-btn" hidden>Fahrt beenden</button>
+          <button id="ride-log" class="btn btn-secondary setting-btn" hidden>Fahrtenbuch</button>
+        </section>
 
-      <section class="setting">
-        <div class="setting-title">Tag- und Nachtansicht</div>
-        <div class="setting-hint">„Automatisch“ schaltet kurz vor Sonnenuntergang auf dunkel und morgens zurück.</div>
-        <div class="segmented segmented-3" role="radiogroup" aria-label="Tag- und Nachtansicht">
-          <button role="radio" data-theme-option="day">Tag</button>
-          <button role="radio" data-theme-option="night">Nacht</button>
-          <button role="radio" data-theme-option="auto">Automatisch</button>
-        </div>
-      </section>
+        <section class="setting">
+          <div class="setting-title">Neigungsmesser</div>
+          <div class="setting-hint">Zum Ausprobieren im Stand: zeigt, wie stark das Handy gerade geneigt ist. Während der Fahrt wird die Schräglage aus Tempo und Kurve berechnet, nicht hiermit.</div>
+          <div id="tilt-readout" class="tilt-readout" hidden>
+            <svg class="tilt-gauge" viewBox="0 0 200 112" aria-hidden="true">
+              <path class="lean-arc" d="M18 104A82 82 0 0 1 182 104"/>
+              <path class="lean-tick" d="M100 22v10M42 46l7 7M158 46l-7 7"/>
+              <line id="tilt-needle" class="lean-needle" x1="100" y1="104" x2="100" y2="30"/>
+              <circle cx="100" cy="104" r="6" class="lean-hub"/>
+            </svg>
+            <div id="tilt-value" class="tilt-value">0°</div>
+          </div>
+          <p id="tilt-error" class="error" hidden></p>
+          <button id="tilt-toggle" class="btn btn-secondary setting-btn">Neigungsmesser starten</button>
+        </section>
+      </details>
 
-      <section class="setting">
-        <div class="setting-title">Stimme der Ansagen</div>
-        <div id="voice-hint" class="setting-hint">Welche Stimme die Abbiegehinweise sagt.</div>
-        <select id="voice-select" class="text-input select-input" aria-label="Stimme der Ansagen"></select>
-        <div class="slider-row">
-          <span class="slider-label">Tempo</span>
-          <span id="voice-rate-value" class="slider-value">normal</span>
-        </div>
-        <input id="voice-rate" class="slider" type="range" min="0.6" max="1.6" step="0.1" value="1" aria-label="Sprechtempo">
-        <div class="slider-row">
-          <span class="slider-label">Tonhöhe</span>
-          <span id="voice-pitch-value" class="slider-value">normal</span>
-        </div>
-        <input id="voice-pitch" class="slider" type="range" min="0.6" max="1.6" step="0.1" value="1" aria-label="Tonhöhe">
-        <button id="voice-test" class="btn btn-secondary setting-btn">Stimme anhören</button>
-      </section>
+      <details class="group">
+        <summary class="group-head">Anzeige</summary>
+        <section class="setting">
+          <div class="setting-title">Tag- und Nachtansicht</div>
+          <div class="setting-hint">„Automatisch“ schaltet kurz vor Sonnenuntergang auf dunkel und morgens zurück.</div>
+          <div class="segmented segmented-3" role="radiogroup" aria-label="Tag- und Nachtansicht">
+            <button role="radio" data-theme-option="day">Tag</button>
+            <button role="radio" data-theme-option="night">Nacht</button>
+            <button role="radio" data-theme-option="auto">Automatisch</button>
+          </div>
+        </section>
 
-      <section class="setting">
-        <div class="setting-title">Ton bei zu schnell</div>
-        <div class="setting-hint">Kurzer Ton, wenn du deutlich über dem Tempolimit bist. Der Stumm-Knopf auf der Karte schaltet ihn mit ab.</div>
-        <div class="segmented" role="radiogroup" aria-label="Ton bei zu schnell">
-          <button role="radio" data-beep-option="on">An</button>
-          <button role="radio" data-beep-option="off">Aus</button>
-        </div>
-      </section>
+        <section class="setting">
+          <div class="setting-title">Karte ausrichten</div>
+          <div class="setting-hint">Dreht sich die Karte mit dir mit oder zeigt Norden immer nach oben?</div>
+          <div class="segmented" role="radiogroup" aria-label="Karte ausrichten">
+            <button role="radio" data-view-option="heading">Fahrtrichtung</button>
+            <button role="radio" data-view-option="north">Norden oben</button>
+          </div>
+        </section>
 
-      <section class="setting">
-        <div class="setting-title">Spotify</div>
-        <div id="spotify-hint" class="setting-hint"></div>
-        <div id="spotify-client">
-          <input id="spotify-client-id" class="text-input" type="text" placeholder="Client-ID aus dem Spotify-Dashboard" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
-          <p class="note">Redirect-URI für deine Spotify-App: <b id="spotify-redirect" class="selectable"></b></p>
-        </div>
-        <p id="spotify-message" class="error" hidden></p>
-        <button id="spotify-connect" class="btn btn-secondary setting-btn">Mit Spotify verbinden</button>
-      </section>
+        <section class="setting">
+          <div class="setting-title">Cockpit im Querformat</div>
+          <div class="setting-hint">Auf welcher Seite Tempo, Uhrzeit und Knöpfe stehen.</div>
+          <div class="segmented" role="radiogroup" aria-label="Cockpit im Querformat">
+            <button role="radio" data-cockpit-option="left">
+              <svg viewBox="0 0 36 22" aria-hidden="true"><rect x="1" y="1" width="34" height="20" rx="3"/><rect class="fill" x="3" y="3" width="10" height="16" rx="1.5"/></svg>
+              <span>Links</span>
+            </button>
+            <button role="radio" data-cockpit-option="right">
+              <svg viewBox="0 0 36 22" aria-hidden="true"><rect x="1" y="1" width="34" height="20" rx="3"/><rect class="fill" x="23" y="3" width="10" height="16" rx="1.5"/></svg>
+              <span>Rechts</span>
+            </button>
+          </div>
+        </section>
+      </details>
 
-      <section class="setting">
-        <div class="setting-title">Fahrt</div>
-        <div id="ride-hint" class="setting-hint"></div>
-        <button id="ride-end" class="btn btn-secondary setting-btn" hidden>Fahrt beenden</button>
-        <button id="ride-log" class="btn btn-secondary setting-btn" hidden>Fahrtenbuch</button>
-      </section>
+      <details class="group">
+        <summary class="group-head">Ansagen &amp; Töne</summary>
+        <section class="setting">
+          <div class="setting-title">Stimme der Ansagen</div>
+          <div id="voice-hint" class="setting-hint">Welche Stimme die Abbiegehinweise sagt.</div>
+          <select id="voice-select" class="text-input select-input" aria-label="Stimme der Ansagen"></select>
+          <div class="slider-row">
+            <span class="slider-label">Tempo</span>
+            <span id="voice-rate-value" class="slider-value">normal</span>
+          </div>
+          <input id="voice-rate" class="slider" type="range" min="0.6" max="1.6" step="0.1" value="1" aria-label="Sprechtempo">
+          <div class="slider-row">
+            <span class="slider-label">Tonhöhe</span>
+            <span id="voice-pitch-value" class="slider-value">normal</span>
+          </div>
+          <input id="voice-pitch" class="slider" type="range" min="0.6" max="1.6" step="0.1" value="1" aria-label="Tonhöhe">
+          <button id="voice-test" class="btn btn-secondary setting-btn">Stimme anhören</button>
+        </section>
 
-      <section class="setting">
-        <div class="setting-title">Demo-Fahrt</div>
-        <div class="setting-hint">Simulierte Fahrt durch den Schwarzwald – zum Ausprobieren ohne Motorrad.</div>
-        <button id="settings-demo" class="btn btn-secondary setting-btn">Demo-Fahrt starten</button>
-      </section>
+        <section class="setting">
+          <div class="setting-title">Ton bei zu schnell</div>
+          <div class="setting-hint">Kurzer Ton, wenn du deutlich über dem Tempolimit bist. Läuft unabhängig vom Stumm-Knopf auf der Karte – nur hier schaltest du ihn ab.</div>
+          <div class="segmented" role="radiogroup" aria-label="Ton bei zu schnell">
+            <button role="radio" data-beep-option="on">An</button>
+            <button role="radio" data-beep-option="off">Aus</button>
+          </div>
+        </section>
+      </details>
+
+      <details class="group">
+        <summary class="group-head">Musik<span class="group-note" id="spotify-badge"></span></summary>
+        <section class="setting">
+          <div id="spotify-hint" class="setting-hint"></div>
+          <div id="spotify-client">
+            <input id="spotify-client-id" class="text-input" type="text" placeholder="Client-ID aus dem Spotify-Dashboard" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+            <p class="note">Redirect-URI für deine Spotify-App: <b id="spotify-redirect" class="selectable"></b></p>
+          </div>
+          <p id="spotify-message" class="error" hidden></p>
+          <button id="spotify-connect" class="btn btn-secondary setting-btn">Mit Spotify verbinden</button>
+        </section>
+      </details>
+
+      <details class="group">
+        <summary class="group-head">Sonstiges</summary>
+        <section class="setting">
+          <div class="setting-title">Demo-Fahrt</div>
+          <div class="setting-hint">Simulierte Fahrt durch den Schwarzwald – zum Ausprobieren ohne Motorrad.</div>
+          <button id="settings-demo" class="btn btn-secondary setting-btn">Demo-Fahrt starten</button>
+        </section>
+      </details>
 
       <p class="sheet-foot">MotoDash · Version <span class="app-version"></span></p>
     </div>
@@ -250,6 +287,7 @@
         <h2 id="summary-title">Deine Fahrt</h2>
         <button id="summary-close" class="sheet-close">Fertig</button>
       </div>
+      <input id="summary-name" class="text-input title-input" type="text" maxlength="60" placeholder="Name der Fahrt" aria-label="Name der Fahrt">
       <p id="sum-date" class="note"></p>
       <div id="sum-map-wrap" class="sum-map-wrap" hidden>
         <div id="sum-map" class="sum-map"></div>
@@ -298,6 +336,25 @@
       </div>
       <ul id="rides-list" class="rides-list"></ul>
       <p class="sheet-foot">Gespeichert nur auf diesem Gerät · bis zu 50 Aufnahmen</p>
+    </div>
+  </div>
+
+  <div id="enroute" class="sheet-backdrop" hidden>
+    <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="enroute-title">
+      <div class="sheet-head">
+        <h2 id="enroute-title">Unterwegs</h2>
+        <button id="enroute-close" class="sheet-close">Fertig</button>
+      </div>
+      <p class="setting-hint">Halt entlang der Route suchen – der Stopp wird eingefügt, danach geht es weiter zum Ziel.</p>
+      <div id="enroute-categories" class="chip-row category-row"></div>
+      <p id="enroute-status" class="search-status" hidden></p>
+      <ul id="enroute-results" class="place-list"></ul>
+
+      <section class="setting">
+        <div class="setting-title">Straße gesperrt</div>
+        <div class="setting-hint">Baustelle oder Sperrung vor dir? Dann berechne ich die Route neu und lasse dieses Stück für diese Fahrt weg.</div>
+        <button id="enroute-block" class="btn btn-secondary setting-btn">Strecke vor mir sperren</button>
+      </section>
     </div>
   </div>
 
