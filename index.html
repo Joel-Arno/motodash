@@ -13,8 +13,8 @@
   <link rel="icon" href="icons/icon-192.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@6.9.1/dist/maplibre-gl.css">
-  <link rel="stylesheet" href="css/style.css?v=1.7">
-  <script type="module" src="js/app.js?v=1.7"></script>
+  <link rel="stylesheet" href="css/style.css?v=1.7.1">
+  <script type="module" src="js/app.js?v=1.7.1"></script>
 </head>
 <body>
   <div id="app">
@@ -172,6 +172,13 @@
           <button role="radio" data-theme-option="night">Nacht</button>
           <button role="radio" data-theme-option="auto">Automatisch</button>
         </div>
+      </section>
+
+      <section class="setting">
+        <div class="setting-title">Stimme der Ansagen</div>
+        <div id="voice-hint" class="setting-hint">Welche Stimme die Abbiegehinweise sagt.</div>
+        <select id="voice-select" class="text-input select-input" aria-label="Stimme der Ansagen"></select>
+        <button id="voice-test" class="btn btn-secondary setting-btn">Stimme anhören</button>
       </section>
 
       <section class="setting">
