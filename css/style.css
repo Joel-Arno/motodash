@@ -714,6 +714,25 @@ svg.i {
   stroke: none;
 }
 
+/* Einstellungen behalten ihre Höhe – beim Auf- und Zuklappen springt nichts mehr. */
+#settings .sheet {
+  height: min(700px, 100%);
+  display: flex;
+  flex-direction: column;
+}
+
+#settings .sheet-head {
+  flex: none;
+}
+
+.sheet-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
 /* ---------- Einstellungen: aufklappbare Gruppen ---------- */
 
 .group {
@@ -788,6 +807,18 @@ svg.i {
   font-size: 34px;
   font-weight: 800;
   font-variant-numeric: tabular-nums;
+}
+
+.time-input {
+  min-height: 44px;
+  padding: 0 12px;
+  border-radius: 12px;
+  background: var(--panel-2);
+  border: 2px solid var(--line);
+  color: var(--text);
+  font: inherit;
+  font-size: 17px;
+  font-weight: 700;
 }
 
 .title-input {
