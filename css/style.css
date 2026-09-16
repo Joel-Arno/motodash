@@ -10,7 +10,8 @@
   --ok: #3ddc84;
   --warn: #ffb020;
   --bad: #ff5a5a;
-  --fab-bg: rgba(20, 24, 30, 0.88);
+  --fab-bg: rgba(38, 45, 56, 0.92);
+  --action-bg: #262d38; /* die vier Knöpfe im Cockpit – etwas heller als die Flächen ringsum */
   --shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
 
   --safe-top: env(safe-area-inset-top, 0px);
@@ -34,6 +35,7 @@
   --warn: #c77700;
   --bad: #d92d2d;
   --fab-bg: rgba(255, 255, 255, 0.94);
+  --action-bg: var(--panel-2);
   --shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
 
   color-scheme: light;
@@ -429,7 +431,7 @@ svg.i {
   justify-content: center;
   gap: 4px;
   border-radius: 16px;
-  background: var(--panel-2);
+  background: var(--action-bg);
   font-size: 13px;
   font-weight: 600;
 }
@@ -1117,7 +1119,12 @@ svg.i {
   box-shadow: var(--shadow);
   font-size: 24px;
   font-weight: 800;
-  white-space: nowrap;
+  /* Lange Meldungen umbrechen, sonst stehen sie im Hochformat über den Rand hinaus.
+     width: max-content, weil die Breite sonst durch left: 50 % nur den halben Bildschirm hergibt. */
+  width: max-content;
+  max-width: min(86%, 460px);
+  text-align: center;
+  overflow-wrap: break-word;
 }
 
 .stop-marker {
