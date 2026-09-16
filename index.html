@@ -13,8 +13,8 @@
   <link rel="icon" href="icons/icon-192.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@6.9.1/dist/maplibre-gl.css">
-  <link rel="stylesheet" href="css/style.css?v=2.0">
-  <script type="module" src="js/app.js?v=2.0"></script>
+  <link rel="stylesheet" href="css/style.css?v=2.1">
+  <script type="module" src="js/app.js?v=2.1"></script>
 </head>
 <body>
   <div id="app">
@@ -148,6 +148,7 @@
         <button id="settings-close" class="sheet-close">Fertig</button>
       </div>
 
+      <div class="sheet-body">
       <details class="group" open>
         <summary class="group-head">Fahrt<span class="group-note" id="ride-badge"></span></summary>
         <section class="setting">
@@ -262,6 +263,7 @@
       </details>
 
       <p class="sheet-foot">MotoDash · Version <span class="app-version"></span></p>
+      </div>
     </div>
   </div>
 
@@ -378,6 +380,17 @@
       <section id="plan-view">
         <ol id="stop-list" class="stop-list"></ol>
         <button id="add-stop" class="row-btn">+ Ziel hinzufügen</button>
+
+        <h3 class="section-title">Ankunft</h3>
+        <div class="segmented" role="radiogroup" aria-label="Ankunft">
+          <button role="radio" data-arrive-option="fast">So schnell wie möglich</button>
+          <button role="radio" data-arrive-option="time">Zu einer Uhrzeit</button>
+        </div>
+        <div id="arrive-row" class="slider-row" hidden>
+          <span class="slider-label">Ankommen um</span>
+          <input id="arrive-time" class="time-input" type="time" aria-label="Gewünschte Ankunftszeit">
+        </div>
+        <p id="arrive-hint" class="note" hidden>Ist mehr Zeit da als nötig, plane ich einen landschaftlichen Umweg. Reicht die Zeit nicht, bekommst du die schnellste Route.</p>
 
         <h3 class="section-title">Optionen</h3>
         <div id="route-option-list" class="option-list"></div>
