@@ -8,14 +8,15 @@ import { createPlanner } from './planner.js?v=1.3';
 import { fetchRoutes, fetchSpeedLimits } from './routing.js?v=1.4';
 import { findRoundTrips } from './tours.js?v=1.4';
 import { Navigation, maneuverIcon, maneuverShort, maneuverTitle } from './navigation.js?v=1.4';
-import { setMuted, speak, unlockVoice, voiceSupported } from './voice.js?v=1.4';
+import { germanVoices, onVoicesChanged, setMuted, setVoice, speak, unlockVoice, voiceSupported } from './voice.js?v=1.7.1';
 import { RideStats } from './ride-stats.js?v=1.6';
 import { deleteRide, loadRides, migrateLegacyRide, rideFileTitle, rideGPX, rideTotals, saveRide, trackGeoJSON } from './rides.js?v=1.7';
 import { isNightAt } from './sun.js?v=1.7';
 import { describeWeather, fetchWeather, rainSummary } from './weather.js?v=1.5';
 import * as spotify from './spotify.js?v=1.6';
 
-const APP_VERSION = '1.7';
+const APP_VERSION = '1.7.1';
+const VOICE_SAMPLE = 'In dreihundert Metern rechts abbiegen.';
 const SPEED_BEEP_REPEAT_MS = 45000; // bei dauerhaft zu schnell nicht öfter piepen
 const AUTO_THEME_CHECK_MS = 60000; // so oft prüfen, ob es dämmert
 const WEATHER_REFRESH_MS = 10 * 60 * 1000;
@@ -182,6 +183,17 @@ function init() {
   $('btn-zoom-out').addEventListener('click', () => zoomBy(-1));
   $('btn-recenter').addEventListener('click', recenter);
   setMuted(settings.voiceMuted);
+  setVoice(settings.voice);
+  onVoicesChanged(() => {
+    if (!$('settings').hidden) renderVoiceSetting(); // iPhone meldet die Stimmen manchmal verzögert
+  });
+  $('voice-select').addEventListener('change', () => {
+    settings.voice = $('voice-select').value || null;
+    saveSettings();
+    setVoice(settings.voice);
+    speak(VOICE_SAMPLE, { force: true });
+  });
+  $('voice-test').addEventListener('click', () => speak(VOICE_SAMPLE, { force: true }));
   $('btn-voice').addEventListener('click', () => {
     settings.voiceMuted = !settings.voiceMuted;
     saveSettings();
@@ -1122,6 +1134,27 @@ function renderShareButton() {
   $('btn-share-location').hidden = !state.mode;
 }
 
+const VOICE_HINT_MORE = 'Weitere Stimmen lädst du am iPhone unter Einstellungen → Bedienungshilfen → Gesprochene Inhalte → Stimmen → Deutsch. Sie erscheinen danach hier.';
+
+/** Aus „Eddy (Deutsch (Deutschland))“ wird „Eddy“; andere Länder bekommen ihr Kürzel dazu. */
+function voiceName({ name, lang }) {
+  const short = name.replace(/\s*\((deutsch|german)[\s\S]*$/i, '').trim() || name;
+  return lang === 'de-DE' ? short : `${short} (${lang})`;
+}
+
+function renderVoiceSetting() {
+  const select = $('voice-select');
+  const voices = germanVoices();
+  select.replaceChildren(new Option('Standard-Stimme', ''), ...voices.map((voice) => new Option(voiceName(voice), voice.uri)));
+  // Eine gespeicherte Stimme kann fehlen, wenn sie am iPhone gelöscht wurde.
+  select.value = voices.some((voice) => voice.uri === settings.voice) ? settings.voice : '';
+  select.disabled = !voices.length;
+  $('voice-test').disabled = !voiceSupported;
+  $('voice-hint').textContent = voices.length
+    ? `Welche Stimme die Abbiegehinweise sagt. ${VOICE_HINT_MORE}`
+    : `Dein Gerät meldet gerade keine deutsche Stimme. ${VOICE_HINT_MORE}`;
+}
+
 function renderThemeSetting() {
   document.querySelectorAll('[data-theme-option]').forEach((btn) => {
     btn.setAttribute('aria-checked', String(btn.dataset.themeOption === settings.themeMode));
@@ -1140,6 +1173,7 @@ function openSettings() {
   renderRideSetting();
   renderThemeSetting();
   renderBeepSetting();
+  renderVoiceSetting();
   $('settings').hidden = false;
 }
 
@@ -1727,6 +1761,7 @@ function loadSettings() {
     route: { avoidHighways: false, avoidTolls: false, avoidFerries: false },
     plan: { mode: 'dest', unit: 'km', km: 100, hours: 2, direction: null },
     voiceMuted: false,
+    voice: null, // voiceURI der gewählten Stimme, null = Stimme des Geräts
     speedBeep: true,
   };
   try {
