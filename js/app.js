@@ -14,7 +14,7 @@ import { deleteRide, loadRides, migrateLegacyRide, saveRide, trackGeoJSON } from
 import { describeWeather, fetchWeather, rainSummary } from './weather.js?v=1.5';
 import * as spotify from './spotify.js?v=1.6';
 
-const APP_VERSION = '1.6.1';
+const APP_VERSION = '1.6.2';
 const WEATHER_REFRESH_MS = 10 * 60 * 1000;
 const WEATHER_MOVE_METERS = 10000; // nach so viel Strecke neu abfragen
 const MUSIC_POLL_MS = 5000;
@@ -1276,7 +1276,7 @@ function finishRecording() {
 
   const summary = stats.summary();
   if (summary.meters < MIN_RIDE_METERS) {
-    showToast('Aufnahme unter 200 m – nicht gespeichert');
+    showToast('Unter 200 m – nicht gespeichert'); // festes Leerzeichen: „200 m“ bleibt zusammen
     return;
   }
   showRideSummary(saveRide({ ...summary, source, title }));
