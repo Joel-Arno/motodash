@@ -14,7 +14,7 @@ import { deleteRide, loadRides, migrateLegacyRide, saveRide, trackGeoJSON } from
 import { describeWeather, fetchWeather, rainSummary } from './weather.js?v=1.5';
 import * as spotify from './spotify.js?v=1.6';
 
-const APP_VERSION = '1.6';
+const APP_VERSION = '1.6.1';
 const WEATHER_REFRESH_MS = 10 * 60 * 1000;
 const WEATHER_MOVE_METERS = 10000; // nach so viel Strecke neu abfragen
 const MUSIC_POLL_MS = 5000;
@@ -115,6 +115,7 @@ let planner;
 let recording = null;
 let summaryMap = null; // Karte in der Auswertung
 let summaryRide = null; // gerade angezeigte Aufnahme
+let cameFromRideLog = false; // Auswertung aus dem Fahrtenbuch geöffnet – danach wieder dorthin zurück
 const markerEl = document.createElement('div');
 markerEl.className = 'rider';
 markerEl.innerHTML = '<svg viewBox="0 0 48 48"><path d="M24 5 L40 42 L24 33 L8 42 Z"/></svg>';
@@ -1444,11 +1445,21 @@ function renderSummaryMap(ride) {
   }
 }
 
+/** Aus dem Fahrtenbuch heraus: Liste zur Seite legen, damit die Auswertung frei liegt. */
+function openRideFromLog(ride) {
+  cameFromRideLog = true;
+  $('rides-sheet').hidden = true;
+  showRideSummary(ride);
+}
+
 function closeRideSummary() {
   $('ride-summary').hidden = true;
   summaryMap?.remove(); // Grafikspeicher freigeben
   summaryMap = null;
   summaryRide = null;
+  if (!cameFromRideLog) return;
+  cameFromRideLog = false;
+  openRideLog(); // zurück zur Liste – neu aufgebaut, falls eine Aufnahme gelöscht wurde
 }
 
 /** Löschen erst beim zweiten Tippen. */
@@ -1465,8 +1476,7 @@ function onDeleteRideTap() {
     return;
   }
   deleteRide(summaryRide.id);
-  closeRideSummary();
-  if (!$('rides-sheet').hidden) renderRideLog();
+  closeRideSummary(); // zeigt das Fahrtenbuch wieder, falls es von dort kam
 }
 
 function openRideLog() {
@@ -1490,7 +1500,7 @@ function renderRideLog() {
       button.querySelector('.row-sub').textContent =
         `${rideShortDateFormat.format(started)} · ${clockFormat.format(started)} · ${formatDuration(ride.movingSeconds)}`;
       button.querySelector('.ride-km').textContent = formatDistance(ride.meters);
-      button.addEventListener('click', () => showRideSummary(ride));
+      button.addEventListener('click', () => openRideFromLog(ride));
       row.append(button);
       return row;
     }),
