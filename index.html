@@ -13,8 +13,8 @@
   <link rel="icon" href="icons/icon-192.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@6.9.1/dist/maplibre-gl.css">
-  <link rel="stylesheet" href="css/style.css?v=2.1">
-  <script type="module" src="js/app.js?v=2.1"></script>
+  <link rel="stylesheet" href="css/style.css?v=2.3">
+  <script type="module" src="js/app.js?v=2.3"></script>
 </head>
 <body>
   <div id="app">
@@ -52,6 +52,7 @@
           </div>
         </div>
         <div id="route-choice-list" class="choice-list"></div>
+        <p id="route-weather" class="chooser-note" hidden></p>
         <div class="chooser-actions">
           <button id="route-cancel" class="btn btn-secondary">Abbrechen</button>
           <button id="route-start" class="btn btn-primary"><span id="route-start-label">Route starten</span></button>
@@ -129,6 +130,7 @@
         <div class="chips">
           <span id="gps" class="chip" data-level="off"><i class="dot"></i><span>GPS aus</span></span>
           <button id="display" class="chip" data-level="off"><i class="dot"></i><span>Display</span></button>
+          <button id="fuel" class="chip" data-level="off" aria-label="Tankstelle suchen"><i class="dot"></i><span>Tanken</span></button>
         </div>
       </div>
 
@@ -155,6 +157,24 @@
           <div id="ride-hint" class="setting-hint"></div>
           <button id="ride-end" class="btn btn-secondary setting-btn" hidden>Fahrt beenden</button>
           <button id="ride-log" class="btn btn-secondary setting-btn" hidden>Fahrtenbuch</button>
+        </section>
+
+        <section class="setting">
+          <div class="setting-title">Tankreichweite</div>
+          <div class="setting-hint">Zählt die Kilometer seit dem letzten Tanken und warnt rechtzeitig. Gezählt wird nur bei echter Fahrt mit geöffneter App.</div>
+          <div class="segmented" role="radiogroup" aria-label="Tankreichweite">
+            <button role="radio" data-fuel-option="on">An</button>
+            <button role="radio" data-fuel-option="off">Aus</button>
+          </div>
+          <div id="fuel-detail" hidden>
+            <div class="slider-row">
+              <span class="slider-label">Reichweite pro Tank</span>
+              <span id="fuel-range-value" class="slider-value">250 km</span>
+            </div>
+            <input id="fuel-range" class="slider" type="range" min="80" max="500" step="10" value="250" aria-label="Reichweite pro Tank">
+            <p id="fuel-status" class="note"></p>
+            <button id="fuel-reset" class="btn btn-secondary setting-btn">Gerade getankt</button>
+          </div>
         </section>
 
         <section class="setting">
@@ -231,6 +251,15 @@
         </section>
 
         <section class="setting">
+          <div class="setting-title">Wie viele Ansagen</div>
+          <div class="setting-hint">„Nur kurz vorher“ lässt die Vorwarnung („In 300 Metern …“) weg und sagt nur noch direkt vor dem Abbiegen Bescheid.</div>
+          <div class="segmented" role="radiogroup" aria-label="Wie viele Ansagen">
+            <button role="radio" data-speech-option="all">Alle</button>
+            <button role="radio" data-speech-option="near">Nur kurz vorher</button>
+          </div>
+        </section>
+
+        <section class="setting">
           <div class="setting-title">Ton bei zu schnell</div>
           <div class="setting-hint">Kurzer Ton, wenn du deutlich über dem Tempolimit bist. Läuft unabhängig vom Stumm-Knopf auf der Karte – nur hier schaltest du ihn ab.</div>
           <div class="segmented" role="radiogroup" aria-label="Ton bei zu schnell">
@@ -304,6 +333,13 @@
         <div class="stat-tile"><span>Max. Tempo</span><b id="sum-max">–</b></div>
         <div class="stat-tile"><span>Höhenmeter</span><b id="sum-climb">–</b></div>
         <div class="stat-tile"><span>Unterwegs</span><b id="sum-total">–</b></div>
+      </div>
+      <div id="sum-profile-wrap" hidden>
+        <h3 class="section-title">Höhenprofil</h3>
+        <div class="profile-card">
+          <svg id="sum-profile" class="profile-chart" viewBox="0 0 320 90" preserveAspectRatio="none" aria-hidden="true"></svg>
+          <div class="profile-labels"><span id="profile-min"></span><span id="profile-max"></span></div>
+        </div>
       </div>
       <h3 class="section-title">Maximale Schräglage</h3>
       <div class="lean-card">
