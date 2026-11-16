@@ -602,6 +602,30 @@ svg.i {
   filter: invert(1);
 }
 
+/* Die Quellenangabe (ⓘ) sitzt immer gegenüber der Knopfreihe, damit sie keinen Knopf berührt:
+   Knöpfe rechts → ⓘ unten links; nur im Querformat mit Cockpit links ist es umgekehrt. */
+#map .maplibregl-ctrl-bottom-right {
+  right: auto;
+  left: 0;
+}
+
+#map .maplibregl-ctrl-bottom-right .maplibregl-ctrl {
+  float: left;
+  margin: 0 0 10px 10px;
+}
+
+@media (orientation: landscape) {
+  :root[data-cockpit="left"] #map .maplibregl-ctrl-bottom-right {
+    left: auto;
+    right: 0;
+  }
+
+  :root[data-cockpit="left"] #map .maplibregl-ctrl-bottom-right .maplibregl-ctrl {
+    float: right;
+    margin: 0 10px 10px 0;
+  }
+}
+
 /* ---------- Einstellungen ---------- */
 
 .sheet-backdrop {
@@ -1092,8 +1116,19 @@ svg.i {
 @media (orientation: portrait) {
   #app.is-choosing .fabs {
     top: calc(84px + var(--edge-top));
-    transform: none;
   }
+}
+
+/* Regen-Aussicht für die gewählte Route */
+.chooser-note {
+  margin: 0 2px 10px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.chooser-note.is-warn {
+  color: var(--warn);
 }
 
 .chooser-actions {
@@ -1634,20 +1669,26 @@ svg.i {
   margin-bottom: 16px;
 }
 
-/* Tankstelle & Co. über der Zielplanung – eine Zeile, notfalls seitlich scrollbar. */
+/* Tankstelle & Co.: alle vier auf einen Blick, ohne seitliches Wischen. */
 .category-row {
-  flex-wrap: nowrap;
-  overflow-x: auto;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
   margin: 0 0 14px;
-  padding-bottom: 2px;
-  scrollbar-width: none;
-}
-
-.category-row::-webkit-scrollbar {
-  display: none;
 }
 
 .category-row .chip-btn {
+  min-height: 48px;
+  padding: 0 10px;
+  background: var(--panel);
+  border: 2px solid var(--line);
+  border-radius: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chip-btn {
   flex: none;
   background: var(--panel);
   border: 2px solid var(--line);
@@ -1999,11 +2040,20 @@ svg.i {
     padding-top: 6px;
   }
 
-  /* Banner oben braucht Platz – Knöpfe nach unten auf die Cockpit-Seite. */
+  /* Banner und untere Leiste lassen auf der Cockpit-Seite eine Spalte frei – dort sitzen die Knöpfe
+     über die ganze Höhe, ohne dass etwas sie verdeckt. */
+  #app.is-navigating .nav-banner {
+    right: calc(76px + var(--edge-right));
+  }
+
+  :root[data-cockpit="left"] #app.is-navigating .nav-banner {
+    left: calc(76px + var(--edge-left));
+    right: calc(12px + var(--edge-right));
+  }
+
   #app.is-navigating .fabs {
-    top: auto;
+    top: calc(12px + var(--edge-top));
     bottom: calc(12px + var(--edge-bottom));
-    transform: none;
   }
 }
 
@@ -2026,18 +2076,18 @@ svg.i {
 }
 
 /* Quellenangabe über die Leiste schieben, damit sie nicht verdeckt wird. */
-#app.has-dock .maplibregl-ctrl-bottom-right {
+#app.has-dock #map .maplibregl-ctrl-bottom-right {
   bottom: 84px;
 }
 
 @media (orientation: landscape) {
   /* Während der Navigation liegen die Knöpfe unten auf der Cockpit-Seite. */
   #app.is-navigating .map-dock {
-    right: calc(84px + var(--edge-right));
+    right: calc(76px + var(--edge-right));
   }
 
   :root[data-cockpit="left"] #app.is-navigating .map-dock {
-    left: calc(84px + var(--edge-left));
+    left: calc(76px + var(--edge-left));
     right: calc(12px + var(--edge-right));
   }
 }
@@ -2381,6 +2431,39 @@ svg.i {
 }
 
 /* ---------- Auswertung: Karte & Fahrtenbuch ---------- */
+
+.profile-card {
+  padding: 12px 12px 8px;
+  border-radius: 16px;
+  background: var(--panel-2);
+}
+
+.profile-chart {
+  display: block;
+  width: 100%;
+  height: 90px;
+}
+
+.profile-chart .profile-area {
+  fill: color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.profile-chart .profile-line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.profile-labels {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
 
 .sum-map-wrap {
   margin: 4px 0 12px;
