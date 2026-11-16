@@ -83,7 +83,11 @@ export function rideTotals(rides) {
 /** Aufnahme als GPX-Datei – lässt sich teilen und in anderen Karten-Apps öffnen. */
 export function rideGPX(ride) {
   const points = ride.track
-    .map(([lng, lat]) => `    <trkpt lat="${lat.toFixed(5)}" lon="${lng.toFixed(5)}"/>`)
+    .map(([lng, lat, , altitude]) =>
+      Number.isFinite(altitude)
+        ? `    <trkpt lat="${lat.toFixed(5)}" lon="${lng.toFixed(5)}"><ele>${altitude}</ele></trkpt>`
+        : `    <trkpt lat="${lat.toFixed(5)}" lon="${lng.toFixed(5)}"/>`,
+    )
     .join('\n');
   // Einzelne Zeitstempel speichern wir nicht – nur Start und Ende der Fahrt.
   return `<?xml version="1.0" encoding="UTF-8"?>
@@ -100,6 +104,30 @@ ${points}
   </trk>
 </gpx>
 `;
+}
+
+/**
+ * Höhenprofil einer Aufnahme: Strecke (m) und Höhe (m) je Punkt.
+ * @returns {{points: {at: number, altitude: number}[], min: number, max: number, meters: number} | null}
+ *   null, wenn die Aufnahme keine (oder zu wenige) Höhenangaben hat
+ */
+export function elevationProfile(track) {
+  const points = [];
+  let at = 0;
+  for (let i = 0; i < track.length; i++) {
+    if (i > 0) at += planarMeters(track[i - 1], track[i]);
+    if (Number.isFinite(track[i][3])) points.push({ at, altitude: track[i][3] });
+  }
+  if (points.length < 5) return null;
+  const altitudes = points.map((point) => point.altitude);
+  return { points, min: Math.min(...altitudes), max: Math.max(...altitudes), meters: at };
+}
+
+/** Abstand zweier naher Punkte in Metern (für kurze Stücke genau genug). */
+function planarMeters([lng1, lat1], [lng2, lat2]) {
+  const dx = (lng2 - lng1) * 111320 * Math.cos((lat1 * Math.PI) / 180);
+  const dy = (lat2 - lat1) * 110540;
+  return Math.hypot(dx, dy);
 }
 
 /** Name für Datei und Titel, z. B. „Rundtour 16.09.2026“. */

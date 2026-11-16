@@ -102,6 +102,14 @@ export function speak(text, { interrupt = false, force = false } = {}) {
   synth.speak(utterance);
 }
 
+/**
+ * Nach einem Wechsel in eine andere App bleibt die Sprachausgabe auf dem iPhone manchmal stecken:
+ * Ansagen werden angenommen, aber nie gesprochen. Leeren der Warteschlange löst das.
+ */
+export function resetVoice() {
+  synth?.cancel();
+}
+
 /** iOS spricht erst, nachdem einmal in einer Tipp-Aktion gesprochen wurde – still „freischalten“. */
 export function unlockVoice() {
   if (!synth) return;

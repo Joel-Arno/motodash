@@ -1,7 +1,7 @@
 // Route mit Wunsch-Ankunft: Ist mehr Zeit da als nötig, wird ein Umweg eingebaut,
 // damit man später ankommt statt zu warten. Reicht die Zeit nicht, bleibt es bei der schnellsten Route.
 
-import { fetchRoutes } from './routing.js?v=2.1';
+import { fetchRoutes } from './routing.js?v=2.3';
 
 const TOLERANCE = 0.12; // ±12 % gilt als getroffen
 const MAX_ATTEMPTS = 3;

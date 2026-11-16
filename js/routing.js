@@ -1,7 +1,8 @@
 // Routenberechnung über Valhalla (FOSSGIS-Server, kostenlos, mit Motorrad-Profil),
 // Fortschritt entlang einer aktiven Route und Tempolimits.
 
-import { distance } from './geo.js?v=1.2.1';
+import { fetchWithTimeout } from './net.js?v=2.3';
+import { distance } from './geo.js?v=2.3';
 
 const VALHALLA_URL = 'https://valhalla1.openstreetmap.de';
 
@@ -43,7 +44,7 @@ export async function fetchRoutes(points, options = {}) {
 
   let response;
   try {
-    response = await fetch(`${VALHALLA_URL}/route?json=${encodeURIComponent(JSON.stringify(request))}`);
+    response = await fetchWithTimeout(`${VALHALLA_URL}/route?json=${encodeURIComponent(JSON.stringify(request))}`, { timeoutMs: 25000 });
   } catch {
     throw new Error('Keine Verbindung zum Routen-Dienst. Hast du Internet?');
   }
@@ -166,10 +167,24 @@ export async function fetchSpeedLimits(route) {
   return limits;
 }
 
+/**
+ * Tempolimit an der aktuellen Stelle – für die Fahrt ohne Route. Die letzten GPS-Punkte werden
+ * der Straße zugeordnet; es zählt der Abschnitt, auf dem der Fahrer gerade ist.
+ * @param {[number, number][]} trail letzte Positionen [lng, lat], älteste zuerst (mindestens zwei)
+ * @returns {Promise<number>} km/h, 0 = unbekannt
+ */
+export async function fetchLimitHere(trail) {
+  if (trail.length < 2) return 0;
+  const edges = await traceEdges(trail, ['map_snap']);
+  const limit = edges.at(-1)?.speed_limit ?? 0;
+  return limit > 0 && limit < 200 ? limit : 0;
+}
+
 /** Straßenabschnitte zu einer Linie – erst exakt, sonst ungefähr zugeordnet. */
-async function traceEdges(coords) {
-  for (const shapeMatch of ['edge_walk', 'map_snap']) {
-    const response = await fetch(`${VALHALLA_URL}/trace_attributes`, {
+async function traceEdges(coords, modes = ['edge_walk', 'map_snap']) {
+  for (const shapeMatch of modes) {
+    const response = await fetchWithTimeout(`${VALHALLA_URL}/trace_attributes`, {
+      timeoutMs: 20000,
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -272,6 +287,7 @@ export function nearestOnRoute(route, lng, lat, minAlong = -Infinity, maxAlong =
 const SEARCH_BEHIND_METERS = 300;
 const SEARCH_AHEAD_METERS = 3000;
 const JUMP_ADVANTAGE_METERS = 150; // so viel näher muss eine andere Stelle sein, damit wir dorthin springen
+const JOINED_METERS = 60; // so nah gilt der Fahrer als „auf der Route angekommen“
 
 /**
  * Wie weit ist es noch? Projiziert die aktuelle Position auf die Route.
@@ -283,15 +299,21 @@ export class RouteProgress {
     this.route = route;
     this.total = route.shapeMeters;
     this.along = 0; // bisher gefahrene Meter auf der Route
+    this.joined = false; // erst wenn der Fahrer am Anfang wirklich auf der Route ist
   }
 
   update(lng, lat) {
     const nearby = nearestOnRoute(this.route, lng, lat, this.along - SEARCH_BEHIND_METERS, this.along + SEARCH_AHEAD_METERS);
-    const anywhere = nearestOnRoute(this.route, lng, lat);
+    if (nearby.distance <= JOINED_METERS) this.joined = true;
 
-    // Nur springen, wenn eine andere Stelle deutlich näher ist (z. B. Abkürzung gefahren).
-    // Ungenaues GPS am Start einer Rundtour springt so nicht ans Routen-Ende.
-    const best = anywhere.distance < nearby.distance - JUMP_ADVANTAGE_METERS ? anywhere : nearby;
+    // Nur springen, wenn eine andere Stelle deutlich näher ist (z. B. Abkürzung gefahren) – und erst,
+    // nachdem der Fahrer die Route am Anfang erreicht hat. Sonst könnte jemand, der beim Start einer
+    // Rundtour ein Stück neben dem Ausgangspunkt steht, direkt ans Ende springen und wäre sofort „angekommen“.
+    let best = nearby;
+    if (this.joined) {
+      const anywhere = nearestOnRoute(this.route, lng, lat);
+      if (anywhere.distance < nearby.distance - JUMP_ADVANTAGE_METERS) best = anywhere;
+    }
     this.along = best.along;
 
     const remainingMeters = Math.max(0, this.total - best.along);

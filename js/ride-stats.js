@@ -4,7 +4,7 @@
 // in der Kurve drückt die Fliehkraft genau so, dass „unten“ für das Handy weiter Richtung Motorrad zeigt.
 // Deshalb rechnen wir physikalisch aus Tempo und Kurvenrate: tan(Schräglage) = Tempo × Drehrate / g.
 
-import { angleDiff, bearing, distance } from './geo.js?v=1.2.1';
+import { angleDiff, bearing, distance } from './geo.js?v=2.3';
 
 const G = 9.81;
 const MIN_LEAN_SPEED_KMH = 20; // darunter ist die GPS-Richtung zu unruhig
@@ -26,7 +26,7 @@ export class RideStats {
     this.prevCourse = null;
     this.turnRates = [];
     this.altitudeRef = null;
-    this.track = []; // [lng, lat, km/h]
+    this.track = []; // [lng, lat, km/h, Höhe in m (falls bekannt)]
   }
 
   /** @param fix GPS-Punkt ({lng, lat, accuracy, altitude, timestamp}) @param speedKmh bereinigtes Tempo */
@@ -54,7 +54,10 @@ export class RideStats {
   trackPoint(fix, speedKmh) {
     const last = this.track.at(-1);
     if (last && distance([last[0], last[1]], [fix.lng, fix.lat]) < TRACK_STEP_METERS) return;
-    this.track.push([round5(fix.lng), round5(fix.lat), Math.round(speedKmh)]);
+    // Höhe als viertes Feld – fürs Höhenprofil. Ohne Höhenangabe vom GPS bleibt es bei drei Feldern.
+    const point = [round5(fix.lng), round5(fix.lat), Math.round(speedKmh)];
+    if (Number.isFinite(fix.altitude)) point.push(Math.round(fix.altitude));
+    this.track.push(point);
   }
 
   trackClimb(altitude) {

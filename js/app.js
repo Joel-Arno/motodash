@@ -1,25 +1,33 @@
 import * as maplibregl from 'https://cdn.jsdelivr.net/npm/maplibre-gl@6.9.1/dist/maplibre-gl.mjs';
 // Die ?v=… Anhänge sorgen dafür, dass das iPhone nach einem Update die neuen Dateien lädt.
-// Bei jeder Änderung APP_VERSION erhöhen und bei jeder geänderten Datei deren ?v= überall, wo sie geladen wird.
-import { buildStyle, routeDoneGradient, routeStartGradient } from './map-style.js?v=2.1';
-import { DemoRide } from './demo.js?v=1.2.1';
-import { angleDiff, bearing, distance } from './geo.js?v=1.2.1';
-import { createPlanner } from './planner.js?v=2.1';
-import { fetchRoutes, fetchSpeedLimits } from './routing.js?v=2.1';
-import { findRoundTrips } from './tours.js?v=2.1';
-import { findTimedRoutes } from './timed.js?v=2.1';
-import { Navigation, maneuverIcon, maneuverShort, maneuverTitle } from './navigation.js?v=1.4';
-import { germanVoices, onVoicesChanged, setMuted, setVoice, setVoiceSound, speak, unlockVoice, voiceSupported } from './voice.js?v=1.8';
-import { RideStats } from './ride-stats.js?v=1.6';
-import { deleteRide, loadRides, migrateLegacyRide, renameRide, rideFileTitle, rideGPX, rideTotals, saveRide, trackGeoJSON } from './rides.js?v=2.0';
-import { isNightAt } from './sun.js?v=1.7';
-import { PLACE_CATEGORIES, findPlaces } from './places.js?v=2.0';
-import { describeWeather, fetchWeather, rainSummary } from './weather.js?v=1.5';
-import * as spotify from './spotify.js?v=1.6';
+// Bei jeder Veröffentlichung APP_VERSION erhöhen und ALLE ?v= in index.html und js/*.js auf diese Nummer setzen.
+import { buildStyle, routeDoneGradient, routeStartGradient } from './map-style.js?v=2.3';
+import { DemoRide } from './demo.js?v=2.3';
+import { angleDiff, bearing, distance } from './geo.js?v=2.3';
+import { createPlanner } from './planner.js?v=2.3';
+import { fetchLimitHere, fetchRoutes, fetchSpeedLimits } from './routing.js?v=2.3';
+import { findRoundTrips } from './tours.js?v=2.3';
+import { findTimedRoutes } from './timed.js?v=2.3';
+import { Navigation, maneuverIcon, maneuverShort, maneuverTitle } from './navigation.js?v=2.3';
+import { germanVoices, onVoicesChanged, resetVoice, setMuted, setVoice, setVoiceSound, speak, unlockVoice, voiceSupported } from './voice.js?v=2.3';
+import { RideStats } from './ride-stats.js?v=2.3';
+import { deleteRide, elevationProfile, loadRides, migrateLegacyRide, renameRide, rideFileTitle, rideGPX, rideTotals, saveRide, trackGeoJSON } from './rides.js?v=2.3';
+import { isNightAt } from './sun.js?v=2.3';
+import { fuelStatus, loadFuel, saveFuel } from './fuel.js?v=2.3';
+import { PLACE_CATEGORIES, findPlaces } from './places.js?v=2.3';
+import { describeWeather, fetchRainAt, fetchWeather, rainSummary } from './weather.js?v=2.3';
+import * as spotify from './spotify.js?v=2.3';
 
-const APP_VERSION = '2.1';
+const APP_VERSION = '2.3';
 const VOICE_SAMPLE = 'In dreihundert Metern rechts abbiegen.';
 const SPEED_BEEP_REPEAT_MS = 45000; // bei dauerhaft zu schnell nicht öfter piepen
+// Tempolimit ohne Route: Abfrage frühestens nach so viel Zeit und Strecke
+const FREE_LIMIT_MIN_MS = 12000;
+const FREE_LIMIT_MIN_METERS = 150;
+const FREE_LIMIT_TRAIL_STEP = 25; // Abstand der gemerkten GPS-Punkte
+const FREE_LIMIT_TRAIL_POINTS = 8;
+const FREE_LIMIT_VALID_METERS = 700; // so weit gilt ein abgefragtes Limit höchstens
+const FREE_LIMIT_VALID_MS = 90000;
 // „Straße gesperrt“: welches Stück der Route vor dem Fahrer gemieden wird
 const START_MARK_METERS = 700; // so weit wird der Anfang der Route grün gezeigt
 const BLOCK_FROM_METERS = 40;
@@ -73,6 +81,8 @@ const NAV_ICONS = {
   reroute: '<path d="M38 24a14 14 0 1 1-4.1-9.9M38 8v8h-8"/>',
 };
 
+const IS_IOS =
+  /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 const SETTINGS_KEY = 'motodash.settings';
 const GPS_STALE_MS = 20000;
 const settings = loadSettings();
@@ -116,7 +126,14 @@ const routeState = {
   lastRerouteSpeechAt: 0,
   blocked: [], // für diese Fahrt gesperrte Stellen
 };
+// Tankreichweite: Zähler seit dem letzten Tanken (bleibt über App-Starts erhalten)
+const fuel = loadFuel();
+const fuelMeta = { savedMeters: fuel.sinceMeters, warnedLevel: 'ok' };
+const FUEL_SAVE_METERS = 300; // so oft wird der Zählerstand gesichert
+// Tempolimit beim Fahren ohne Route: letzte GPS-Punkte und das zuletzt abgefragte Limit
+const freeLimit = { trail: [], limit: 0, limitAt: 0, limitPos: null, askedAt: 0, askedPos: null, loading: false };
 let enrouteAbort = null;
+let fittingRoutes = false; // gerade werden die Routen in den Ausschnitt eingepasst
 const clockFormat = new Intl.DateTimeFormat('de-DE', { hour: '2-digit', minute: '2-digit' });
 
 const weatherState = { data: null, loading: false, failedAt: 0 };
@@ -134,12 +151,12 @@ const markerEl = document.createElement('div');
 markerEl.className = 'rider';
 markerEl.innerHTML = '<svg viewBox="0 0 48 48"><path d="M24 5 L40 42 L24 33 L8 42 Z"/></svg>';
 
-init();
 
 function init() {
   applyTheme();
   applyLayout();
   renderButtons();
+  renderRecordButton();
   document.querySelectorAll('.app-version').forEach((el) => (el.textContent = APP_VERSION));
   tick();
   setInterval(tick, 1000);
@@ -187,7 +204,10 @@ function init() {
     keepZoomAndReturn();
   });
   map.on('resize', () => {
-    if (state.follow && view.lng != null) map.jumpTo(cameraFor());
+    if (fittingRoutes) return; // das Einpassen ändert selbst die Kartengröße
+    if (routeState.phase === 'choose') requestAnimationFrame(fitRoutesIntoView); // Handy gedreht
+    else if (state.follow && view.lng != null) map.jumpTo(cameraFor());
+    measureOverlays();
   });
 
   $('btn-live').addEventListener('click', () => start('live'));
@@ -321,6 +341,31 @@ function init() {
 
   $('settings-close').addEventListener('click', closeSettings);
   $('tilt-toggle').addEventListener('click', toggleTilt);
+  $('fuel').addEventListener('click', openFuelSearch);
+  document.querySelectorAll('[data-fuel-option]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      fuel.enabled = btn.dataset.fuelOption === 'on';
+      persistFuel();
+      renderFuelSetting();
+      renderFuelChip();
+    });
+  });
+  $('fuel-range').addEventListener('input', () => {
+    fuel.rangeKm = Number($('fuel-range').value);
+    renderFuelSetting();
+  });
+  $('fuel-range').addEventListener('change', () => {
+    persistFuel();
+    renderFuelChip();
+  });
+  $('fuel-reset').addEventListener('click', () => {
+    fuel.sinceMeters = 0;
+    fuelMeta.warnedLevel = 'ok';
+    persistFuel();
+    renderFuelSetting();
+    renderFuelChip();
+    showToast('Tank-Zähler auf 0 gestellt');
+  });
   $('settings').addEventListener('click', (e) => {
     if (e.target === e.currentTarget) closeSettings();
   });
@@ -340,6 +385,13 @@ function init() {
       else setTheme(settings.themeMode);
     });
   });
+  document.querySelectorAll('[data-speech-option]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      settings.speechLevel = btn.dataset.speechOption;
+      saveSettings();
+      renderSpeechSetting();
+    });
+  });
   document.querySelectorAll('[data-beep-option]').forEach((btn) => {
     btn.addEventListener('click', () => {
       settings.speedBeep = btn.dataset.beepOption === 'on';
@@ -350,8 +402,13 @@ function init() {
   });
 
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState !== 'visible') return;
+    if (document.visibilityState !== 'visible') {
+      persistFuel(); // App geht in den Hintergrund – Zählerstand sichern
+      return;
+    }
     if (wake.wanted && !wake.lock) requestWakeLock();
+    resetVoice(); // iOS lässt die Sprachausgabe nach einem App-Wechsel gern hängen
+    unlockAudio();
     pollMusic();
   });
 }
@@ -379,6 +436,7 @@ function start(mode) {
   setTimeout(collapseAttribution, 8000);
   renderRecordButton();
   renderShareButton();
+  renderFuelChip();
   startMusicPolling();
 
   if (mode === 'live') {
@@ -396,6 +454,8 @@ function start(mode) {
 
 function stop() {
   finishRecording(); // läuft noch eine Aufnahme → speichern und Auswertung zeigen
+  resetFreeLimit();
+  persistFuel();
   stopMusicPolling();
   weatherState.data = null;
   renderWeather();
@@ -427,6 +487,7 @@ function stop() {
   $('start').hidden = false;
   renderRecordButton();
   renderShareButton();
+  renderFuelChip();
 }
 
 // ---------- Position ----------
@@ -459,6 +520,7 @@ function onPosition(fix) {
 
   const kmh = (speed ?? 0) * 3.6;
   state.speedKmh = kmh < 3 ? 0 : kmh; // GPS-Zittern im Stand ignorieren
+  if (prev) countFuelMeters(prev, fix);
   if (heading != null && state.speedKmh >= 5) state.heading = heading;
   state.lastFix = fix;
   state.lastFixAt = Date.now();
@@ -470,7 +532,101 @@ function onPosition(fix) {
   setChip('gps', ...gpsStatus(fix));
 
   animateTo({ lng: fix.lng, lat: fix.lat, heading: state.heading, zoom: autoZoom(state.speedKmh) });
-  updateNavigation();
+  if (routeState.phase === 'active') updateNavigation();
+  else updateFreeLimit(fix);
+}
+
+/**
+ * Tempolimit ohne Route: Alle paar hundert Meter wird die Spur der letzten GPS-Punkte der Straße
+ * zugeordnet. Das Ergebnis gilt nur kurz – nach einem Abbiegen kann längst etwas anderes gelten.
+ */
+function updateFreeLimit(fix) {
+  const here = [fix.lng, fix.lat];
+  const { trail } = freeLimit;
+  if (!trail.length || distance(trail.at(-1), here) >= FREE_LIMIT_TRAIL_STEP) {
+    trail.push(here);
+    if (trail.length > FREE_LIMIT_TRAIL_POINTS) trail.shift();
+  }
+
+  const now = Date.now();
+  const movedSinceAsk = freeLimit.askedPos ? distance(freeLimit.askedPos, here) : Infinity;
+  const due = now - freeLimit.askedAt >= FREE_LIMIT_MIN_MS && movedSinceAsk >= FREE_LIMIT_MIN_METERS;
+  if (due && !freeLimit.loading && trail.length >= 3 && state.speedKmh >= 10 && (fix.accuracy ?? 0) <= 40) {
+    freeLimit.loading = true;
+    freeLimit.askedAt = now;
+    freeLimit.askedPos = here;
+    fetchLimitHere(trail.slice())
+      .then((limit) => Object.assign(freeLimit, { limit, limitAt: Date.now(), limitPos: here }))
+      .catch(() => {}) // ohne Netz gibt es eben kein Schild
+      .finally(() => (freeLimit.loading = false));
+  }
+
+  const fresh =
+    freeLimit.limit &&
+    now - freeLimit.limitAt < FREE_LIMIT_VALID_MS &&
+    distance(freeLimit.limitPos, here) < FREE_LIMIT_VALID_METERS;
+  renderSpeedLimit(fresh ? freeLimit.limit : 0);
+}
+
+// ---------- Tankreichweite ----------
+
+/** Gefahrene Meter zum Tank-Zähler addieren – nur bei echter Fahrt, nicht in der Demo. */
+function countFuelMeters(prev, fix) {
+  if (!fuel.enabled || state.mode !== 'live' || state.speedKmh < 3) return;
+  const seconds = (fix.timestamp - prev.timestamp) / 1000;
+  if (seconds <= 0 || seconds > 10 || (fix.accuracy ?? 0) > 40) return;
+  fuel.sinceMeters += distance([prev.lng, prev.lat], [fix.lng, fix.lat]);
+  if (fuel.sinceMeters - fuelMeta.savedMeters >= FUEL_SAVE_METERS) persistFuel();
+  renderFuelChip({ announce: true });
+}
+
+function persistFuel() {
+  fuelMeta.savedMeters = fuel.sinceMeters;
+  saveFuel(fuel);
+}
+
+/** Hinweis im Cockpit, sobald es knapp wird; beim ersten Mal zusätzlich ansagen. */
+function renderFuelChip({ announce = false } = {}) {
+  const { leftKm, level } = fuelStatus(fuel);
+  const low = level === 'warn' || level === 'bad';
+  setChip('fuel', low && state.mode ? level : 'off', `Tanken · noch ${Math.round(leftKm)} km`);
+  if (!low) {
+    fuelMeta.warnedLevel = 'ok';
+    return;
+  }
+  // Einmal beim Erreichen der Warnschwelle, einmal wenn es dringend wird.
+  if (announce && fuelMeta.warnedLevel !== level && !(fuelMeta.warnedLevel === 'bad' && level === 'warn')) {
+    fuelMeta.warnedLevel = level;
+    const km = Math.max(5, Math.round(leftKm / 5) * 5);
+    showToast(level === 'bad' ? `Bald tanken – noch etwa ${km} km` : `Tank reicht noch etwa ${km} km`);
+    speak(`Der Tank reicht noch etwa ${km} Kilometer.`);
+  }
+}
+
+/** Tipp auf den Tank-Hinweis: gleich nach Tankstellen suchen. */
+function openFuelSearch() {
+  const category = PLACE_CATEGORIES.find((entry) => entry.id === 'fuel');
+  if (routeState.phase === 'active') {
+    openEnroute();
+    searchEnroute(category);
+  } else {
+    planner.openCategory('fuel');
+  }
+}
+
+function renderFuelSetting() {
+  document.querySelectorAll('[data-fuel-option]').forEach((btn) => {
+    btn.setAttribute('aria-checked', String((btn.dataset.fuelOption === 'on') === fuel.enabled));
+  });
+  $('fuel-detail').hidden = !fuel.enabled;
+  $('fuel-range').value = String(fuel.rangeKm);
+  $('fuel-range-value').textContent = `${fuel.rangeKm} km`;
+  const { usedKm, leftKm } = fuelStatus(fuel);
+  $('fuel-status').textContent = `Seit dem Tanken: ${Math.round(usedKm)} km · noch etwa ${Math.round(leftKm)} km`;
+}
+
+function resetFreeLimit() {
+  Object.assign(freeLimit, { trail: [], limit: 0, limitAt: 0, limitPos: null, askedAt: 0, askedPos: null });
 }
 
 function gpsStatus(fix) {
@@ -640,6 +796,10 @@ async function showRouteChoices(points, options, arriveAt = null) {
   }
 
   const result = await findTimedRoutes(points, options, (arriveAt - Date.now()) / 1000);
+  if (result.stretched) {
+    result.routes[0].label = 'Zur Wunschzeit';
+    result.routes[1].label = 'Schnellste';
+  }
   presentChoices({ routes: result.routes, stops: points.slice(1), tour: null });
 
   const tooEarlyMinutes = Math.round((arriveAt - Date.now() - result.routes[0].timeSeconds * 1000) / 60000);
@@ -688,6 +848,7 @@ function presentChoices({ routes, stops, tour }) {
   renderRouteChoices();
   renderRoute();
   renderStopMarkers();
+  renderRouteWeather();
   setFollow(false);
   // Das Auswahlfenster muss erst sichtbar sein, damit die Karte daneben eingepasst werden kann.
   requestAnimationFrame(fitRoutesIntoView);
@@ -697,6 +858,58 @@ function selectRoute(index) {
   routeState.selected = index;
   renderRouteChoices();
   renderRoute();
+  renderRouteWeather();
+}
+
+const rainCache = new Map(); // Ort + Stunde → Regen-Aussicht
+let rainToken = 0;
+
+/**
+ * Regen-Aussicht für die gewählte Route: am Ziel zur Ankunftszeit, bei Rundtouren am
+ * entferntesten Punkt zur Halbzeit.
+ */
+async function renderRouteWeather() {
+  const note = $('route-weather');
+  const route = routeState.routes[routeState.selected];
+  note.hidden = true;
+  if (!route || routeState.phase !== 'choose') return;
+
+  const isTour = Boolean(routeState.tour);
+  let target = route.coords.at(-1);
+  if (isTour) {
+    let farthest = 0;
+    for (const point of route.coords) {
+      const away = distance(route.coords[0], point);
+      if (away > farthest) {
+        farthest = away;
+        target = point;
+      }
+    }
+  }
+  const at = Date.now() + route.timeSeconds * 1000 * (isTour ? 0.5 : 1);
+  const key = `${target[0].toFixed(2)},${target[1].toFixed(2)},${Math.floor(at / 3600000)}`;
+  const token = ++rainToken;
+
+  let rain = rainCache.get(key);
+  if (!rain) {
+    try {
+      rain = await fetchRainAt({ lng: target[0], lat: target[1] }, at);
+      rainCache.set(key, rain);
+    } catch {
+      return; // ohne Wetterdaten einfach keine Zeile
+    }
+  }
+  if (token !== rainToken || routeState.phase !== 'choose') return; // inzwischen andere Route gewählt
+
+  const where = isTour ? 'Unterwegs' : 'Am Ziel';
+  const when = `gegen ${clockFormat.format(new Date(at))} Uhr`;
+  const likely = rain.probability >= 50 || rain.mm >= 0.3;
+  const possible = rain.probability >= 25;
+  if (likely) note.textContent = `☔ ${where} ${when} Regen wahrscheinlich (${rain.probability} %)`;
+  else if (possible) note.textContent = `🌦 ${where} ${when} Regen möglich (${rain.probability} %)`;
+  else note.textContent = `${where} ${when} voraussichtlich trocken`;
+  note.classList.toggle('is-warn', likely);
+  note.hidden = false;
 }
 
 function startRoute() {
@@ -794,7 +1007,10 @@ function updateNavigation() {
   }
 
   renderBanner(status);
-  if (status.speech) speak(status.speech.text, { interrupt: status.speech.interrupt });
+  // „Nur kurz vorher“: Vorwarnung und „weiter der Route folgen“ entfallen.
+  if (status.speech && (settings.speechLevel !== 'near' || status.speech.kind === 'now')) {
+    speak(status.speech.text, { interrupt: status.speech.interrupt });
+  }
 }
 
 /**
@@ -872,15 +1088,22 @@ async function searchEnroute(category) {
   const { signal } = enrouteAbort;
   $('enroute-results').replaceChildren();
   setEnrouteStatus(context?.route ? 'Suche entlang der Route …' : 'Suche in der Nähe …');
+  const show = (places) => $('enroute-results').replaceChildren(...places.map((place) => enrouteRow(place)));
   try {
     const places = await findPlaces(category, {
       origin: currentPosition(),
       route: context?.route,
       fromAlong: context?.fromAlong,
       signal,
+      // Die nächstgelegenen Treffer sofort zeigen, während weiter voraus noch gesucht wird.
+      onPartial: (partial) => {
+        if (signal.aborted) return;
+        show(partial);
+        setEnrouteStatus('Suche weiter voraus …');
+      },
     });
     if (signal.aborted) return;
-    $('enroute-results').replaceChildren(...places.map((place) => enrouteRow(place)));
+    show(places);
     setEnrouteStatus(places.length ? '' : `Nichts gefunden – ${category.label} scheint hier weit weg zu sein.`);
   } catch (err) {
     if (err.name !== 'AbortError') setEnrouteStatus(err.message);
@@ -1191,7 +1414,7 @@ function renderRouteChoices() {
       const isTour = Boolean(routeState.tour);
       const tags = [
         isTour && route.directionLabel,
-        !isTour && index === 0 && routeState.routes.length > 1 && 'Empfohlen',
+        !isTour && (route.label ?? (index === 0 && routeState.routes.length > 1 && 'Empfohlen')),
         route.hasHighway && 'Autobahn',
         route.hasToll && 'Maut',
         route.hasFerry && 'Fähre',
@@ -1239,7 +1462,9 @@ function fitRoutesIntoView() {
   if (fabs.left - wrap.left < wrap.right - fabs.right) padding.left = Math.max(padding.left, fabs.right - wrap.left + 16);
   else padding.right = Math.max(padding.right, wrap.right - fabs.left + 16);
 
+  fittingRoutes = true;
   map.resize(); // Cockpit wurde gerade ausgeblendet – Karte ist größer geworden
+  fittingRoutes = false;
   map.jumpTo({ bearing: 0, pitch: 0, padding: { top: 0, bottom: 0, left: 0, right: 0 } });
   map.fitBounds([[minLng, minLat], [maxLng, maxLat]], { padding, maxZoom: 15, duration: 700 });
 }
@@ -1424,7 +1649,9 @@ function measureOverlays() {
   const chooser = $('route-chooser');
   const top = banner.hidden ? 0 : banner.offsetHeight + 10;
   const dockElement = !$('route-info').hidden || !$('music-bar').hidden ? document.querySelector('.map-dock') : null;
-  const bottom = Math.max(dockElement?.offsetHeight ?? 0, chooser.hidden ? 0 : chooser.offsetHeight) + (dockElement || !chooser.hidden ? 10 : 0);
+  // Die Routenwahl liegt nur im Hochformat unten; im Querformat steht sie seitlich und stört die Knöpfe nicht.
+  const chooserBelow = !chooser.hidden && matchMedia('(orientation: portrait)').matches;
+  const bottom = Math.max(dockElement?.offsetHeight ?? 0, chooserBelow ? chooser.offsetHeight : 0) + (dockElement || chooserBelow ? 10 : 0);
   const root = document.documentElement.style;
   root.setProperty('--banner-h', `${Math.round(top)}px`);
   root.setProperty('--dock-h', `${Math.round(bottom)}px`);
@@ -1513,7 +1740,7 @@ function renderVoiceSetting() {
 
 // ---------- Neigungsmesser (nur zum Ausprobieren im Stand) ----------
 
-const tilt = { active: false, handler: null };
+const tilt = { active: false, handler: null, angle: 0 };
 
 async function toggleTilt() {
   if (tilt.active) {
@@ -1523,10 +1750,10 @@ async function toggleTilt() {
   $('tilt-error').hidden = true;
   try {
     // iOS fragt beim ersten Mal um Erlaubnis – nur direkt aus dem Tipp heraus möglich.
-    if (typeof DeviceOrientationEvent?.requestPermission === 'function') {
-      const answer = await DeviceOrientationEvent.requestPermission();
+    if (typeof DeviceMotionEvent?.requestPermission === 'function') {
+      const answer = await DeviceMotionEvent.requestPermission();
       if (answer !== 'granted') throw new Error('Ohne Zugriff auf die Lagesensoren geht es nicht.');
-    } else if (!('DeviceOrientationEvent' in window)) {
+    } else if (!('DeviceMotionEvent' in window)) {
       throw new Error('Dieses Gerät meldet keine Neigung.');
     }
   } catch (err) {
@@ -1535,8 +1762,14 @@ async function toggleTilt() {
     return;
   }
 
-  tilt.handler = (event) => renderTilt(event.gamma ?? 0);
-  window.addEventListener('deviceorientation', tilt.handler);
+  tilt.angle = 0;
+  tilt.handler = (event) => {
+    const lean = leanFromGravity(event.accelerationIncludingGravity);
+    if (lean == null) return;
+    tilt.angle += (lean - tilt.angle) * 0.2; // glätten, die Sensoren zittern
+    renderTilt(tilt.angle);
+  };
+  window.addEventListener('devicemotion', tilt.handler);
   tilt.active = true;
   $('tilt-readout').hidden = false;
   $('tilt-toggle').textContent = 'Neigungsmesser stoppen';
@@ -1544,23 +1777,47 @@ async function toggleTilt() {
 }
 
 function stopTilt() {
-  if (tilt.handler) window.removeEventListener('deviceorientation', tilt.handler);
+  if (tilt.handler) window.removeEventListener('devicemotion', tilt.handler);
   tilt.handler = null;
   tilt.active = false;
   $('tilt-readout').hidden = true;
   $('tilt-toggle').textContent = 'Neigungsmesser starten';
 }
 
-/** @param gamma Neigung zur Seite in Grad (vom Browser) */
-function renderTilt(gamma) {
-  const angle = clamp(Math.round(gamma), -60, 60);
-  $('tilt-value').textContent = `${Math.abs(angle)}°`;
-  $('tilt-needle').style.transform = `rotate(${angle}deg)`;
+/**
+ * Seitenneigung in Grad aus der Richtung der Schwerkraft – egal, ob das Handy aufrecht in der
+ * Halterung steckt, flach liegt oder quer gehalten wird. Positiv = nach rechts geneigt.
+ */
+function leanFromGravity(gravity) {
+  if (!gravity || gravity.x == null || gravity.y == null || gravity.z == null) return null;
+  // iOS meldet die Schwerkraft selbst, andere Geräte die Gegenkraft – auf „unten“ vereinheitlichen.
+  const sign = IS_IOS ? 1 : -1;
+  const down = { x: gravity.x * sign, y: gravity.y * sign, z: gravity.z * sign };
+  const strength = Math.hypot(down.x, down.y, down.z);
+  if (strength < 1) return null;
+
+  // Anteil der Schwerkraft entlang der waagerechten Bildschirmkante (bei gedrehtem Bildschirm umrechnen).
+  const turned = ((screen.orientation?.angle ?? window.orientation ?? 0) * Math.PI) / 180;
+  const sideways = down.x * Math.cos(turned) - down.y * Math.sin(turned);
+  return (Math.asin(clamp(sideways / strength, -1, 1)) * 180) / Math.PI;
+}
+
+/** @param angle Seitenneigung in Grad, positiv = rechts */
+function renderTilt(angle) {
+  const shown = clamp(Math.round(angle), -60, 60);
+  $('tilt-value').textContent = `${Math.abs(shown)}°`;
+  $('tilt-needle').style.transform = `rotate(${shown}deg)`;
 }
 
 function renderThemeSetting() {
   document.querySelectorAll('[data-theme-option]').forEach((btn) => {
     btn.setAttribute('aria-checked', String(btn.dataset.themeOption === settings.themeMode));
+  });
+}
+
+function renderSpeechSetting() {
+  document.querySelectorAll('[data-speech-option]').forEach((btn) => {
+    btn.setAttribute('aria-checked', String(btn.dataset.speechOption === settings.speechLevel));
   });
 }
 
@@ -1577,7 +1834,9 @@ function openSettings() {
   renderThemeSetting();
   renderViewSetting();
   renderBeepSetting();
+  renderSpeechSetting();
   renderVoiceSetting();
+  renderFuelSetting();
   $('settings').hidden = false;
 }
 
@@ -1958,6 +2217,7 @@ function showRideSummary(ride) {
   $('lean-needle-left').style.transform = 'rotate(0deg)';
   $('lean-needle-right').style.transform = 'rotate(0deg)';
   $('sum-map-wrap').hidden = !(ride.track?.length > 1);
+  renderElevationProfile(ride);
   $('ride-summary').hidden = false;
   $('ride-summary').scrollTop = 0;
 
@@ -1967,6 +2227,26 @@ function showRideSummary(ride) {
     $('lean-needle-right').style.transform = `rotate(${ride.maxLeanRight}deg)`;
     renderSummaryMap(ride);
   });
+}
+
+/** Höhenprofil als Fläche: links Start, rechts Ende. Fehlen Höhenangaben, bleibt der Abschnitt weg. */
+function renderElevationProfile(ride) {
+  const profile = ride.track?.length ? elevationProfile(ride.track) : null;
+  $('sum-profile-wrap').hidden = !profile;
+  if (!profile) return;
+
+  const width = 320;
+  const height = 90;
+  // Mindestens 40 m Spanne zeigen, sonst sieht flaches Land wie ein Gebirge aus.
+  const span = Math.max(40, profile.max - profile.min);
+  const base = profile.min - (span - (profile.max - profile.min)) / 2;
+  const x = (at) => (profile.meters ? (at / profile.meters) * width : 0);
+  const y = (altitude) => height - 4 - ((altitude - base) / span) * (height - 10);
+  const line = profile.points.map((point, i) => `${i ? 'L' : 'M'}${x(point.at).toFixed(1)} ${y(point.altitude).toFixed(1)}`).join(' ');
+  $('sum-profile').innerHTML =
+    `<path class="profile-area" d="${line} L${width} ${height} L0 ${height} Z"/><path class="profile-line" d="${line}"/>`;
+  $('profile-min').textContent = `tiefster Punkt ${profile.min.toLocaleString('de-DE')} m`;
+  $('profile-max').textContent = `höchster Punkt ${profile.max.toLocaleString('de-DE')} m`;
 }
 
 /** Gefahrene Strecke auf einer kleinen Karte, farbig nach Tempo. */
@@ -2151,11 +2431,8 @@ function applyTheme() {
 }
 
 function showInstallHint() {
-  const isIOS =
-    /iPhone|iPad|iPod/.test(navigator.userAgent) ||
-    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
   const isStandalone = navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
-  $('install-hint').hidden = !(isIOS && !isStandalone);
+  $('install-hint').hidden = !(IS_IOS && !isStandalone);
 }
 
 function showStartError(message) {
@@ -2180,6 +2457,7 @@ function loadSettings() {
     voiceRate: 1, // Sprechtempo (1 = normal)
     voicePitch: 1, // Tonhöhe (1 = normal)
     speedBeep: true,
+    speechLevel: 'all', // 'all' | 'near' (nur die Ansage direkt vor dem Abbiegen)
   };
   try {
     const stored = JSON.parse(localStorage.getItem(SETTINGS_KEY)) ?? {};
@@ -2199,3 +2477,8 @@ function saveSettings() {
     // Privater Modus o. Ä. – Einstellungen gelten dann nur für diese Sitzung.
   }
 }
+
+// Ganz am Ende starten: Erst dann sind alle Werte weiter oben in dieser Datei angelegt.
+// (Vorher lief init() mitten in der Datei – mit „Tag/Nacht automatisch“ griff der Start auf einen
+// noch nicht angelegten Wert zu und die App blieb auf dem Startbildschirm hängen.)
+init();

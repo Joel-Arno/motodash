@@ -1,7 +1,7 @@
 // „Ziel“-Fenster: Ziel suchen, Zwischenziele, Favoriten, Rundtouren, Routen-Optionen.
 
-import { reversePlace, searchPlaces } from './search.js?v=1.2.1';
-import { PLACE_CATEGORIES, findPlaces } from './places.js?v=2.0';
+import { reversePlace, searchPlaces } from './search.js?v=2.3';
+import { PLACE_CATEGORIES, findPlaces } from './places.js?v=2.3';
 
 const FAVORITES_KEY = 'motodash.favorites';
 const SEARCH_DELAY_MS = 300;
@@ -344,6 +344,12 @@ export function createPlanner({
         route: context?.route,
         fromAlong: context?.fromAlong,
         signal,
+        // Die nächstgelegenen Treffer sofort zeigen, während weiter voraus noch gesucht wird.
+        onPartial: (partial) => {
+          if (signal.aborted) return;
+          renderResults(partial, context);
+          setSearchStatus('Suche weiter voraus …');
+        },
       });
       if (signal.aborted) return;
       renderResults(places, context);
@@ -571,7 +577,14 @@ export function createPlanner({
     $('plan-error').hidden = true;
   }
 
-  return { open, close, clearStops };
+  /** Planer gleich mit einer Kategorie öffnen (z. B. „Tankstelle“ über den Tank-Hinweis). */
+  function openCategory(id) {
+    open();
+    const category = PLACE_CATEGORIES.find((entry) => entry.id === id);
+    if (category) runCategorySearch(category);
+  }
+
+  return { open, close, clearStops, openCategory };
 }
 
 /** Vorschlag: in einer Stunde, auf 5 Minuten gerundet. */

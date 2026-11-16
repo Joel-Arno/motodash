@@ -1,7 +1,7 @@
 // Abbiegehinweise während der Fahrt: nächstes Manöver, Zeitpunkt der Ansagen, Abweichung von der Route.
 // Enthält keine Oberfläche – app.js zeigt an und spricht.
 
-import { RouteProgress } from './routing.js?v=2.1';
+import { RouteProgress } from './routing.js?v=2.3';
 
 const PASSED_METERS = 10; // ab hier gilt ein Manöver als erledigt
 const OFF_ROUTE_MIN_METERS = 50;
@@ -67,7 +67,7 @@ export class Navigation {
       this.lastPassed = passedIndex;
       const passed = maneuvers[passedIndex];
       if (passed.after && distanceToNext > LONG_STRETCH_METERS && once(this.spoken, `${passedIndex}:after`)) {
-        return { text: passed.after, interrupt: false };
+        return { text: passed.after, interrupt: false, kind: 'after' };
       }
     }
 
@@ -81,11 +81,11 @@ export class Navigation {
       this.spoken.add(`${index}:far`);
       let text = nowText(m);
       if (then) text += ` Danach ${lowerFirst(then.kind === 'turn' ? then.alert : shortArrival(then))}`;
-      return { text, interrupt: true };
+      return { text, interrupt: true, kind: 'now' };
     }
 
     if (distanceToNext <= farMeters && distanceToNext > nearMeters + 80 && once(this.spoken, `${index}:far`)) {
-      return { text: `In ${spokenDistance(distanceToNext)} ${lowerFirst(alertText(m))}`, interrupt: false };
+      return { text: `In ${spokenDistance(distanceToNext)} ${lowerFirst(alertText(m))}`, interrupt: false, kind: 'far' };
     }
     return null;
   }

@@ -1,5 +1,6 @@
 // Orts- und Adresssuche über Photon (komoot, OpenStreetMap-Daten, kostenlos).
 
+import { fetchWithTimeout } from './net.js?v=2.3';
 const PHOTON_URL = 'https://photon.komoot.io';
 
 /** Sucht Orte/Adressen, bevorzugt in der Nähe von `near`. */
@@ -32,7 +33,7 @@ export async function reversePlace(lng, lat, signal) {
 async function getJson(url, signal) {
   let response;
   try {
-    response = await fetch(url, { signal });
+    response = await fetchWithTimeout(url, { signal, timeoutMs: 8000 });
   } catch (err) {
     if (err.name === 'AbortError') throw err;
     throw new Error('Keine Verbindung zur Suche. Hast du Internet?');

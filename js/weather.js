@@ -1,5 +1,6 @@
 // Wetter über Open-Meteo (kostenlos, ohne Anmeldung): aktuell, Regen der nächsten 2 Stunden, nächste Stunden.
 
+import { fetchWithTimeout } from './net.js?v=2.3';
 const API_URL = 'https://api.open-meteo.com/v1/forecast';
 const RAIN_MM_PER_15_MIN = 0.2; // ab hier zählt es als Regen (leichter Niesel darunter nicht)
 
@@ -17,7 +18,7 @@ export async function fetchWeather({ lng, lat }) {
 
   let response;
   try {
-    response = await fetch(`${API_URL}?${params}`);
+    response = await fetchWithTimeout(`${API_URL}?${params}`, { timeoutMs: 10000 });
   } catch {
     throw new Error('Keine Verbindung zum Wetterdienst.');
   }
@@ -82,4 +83,34 @@ export function describeWeather(code, isDay = true) {
   if (code === 85 || code === 86) return { icon: '🌨️', text: 'Schneeschauer' };
   if (code >= 95) return { icon: '⛈️', text: 'Gewitter' };
   return { icon: '🌡️', text: 'Wetter' };
+}
+
+/**
+ * Regen-Aussicht für einen Ort zu einem späteren Zeitpunkt (z. B. Ankunft am Ziel).
+ * @returns {Promise<{probability: number, mm: number, code: number}>} Wahrscheinlichkeit in %, Menge in mm/h
+ */
+export async function fetchRainAt({ lng, lat }, atMs) {
+  const hoursAhead = Math.max(0, (atMs - Date.now()) / 3600000);
+  const params = new URLSearchParams({
+    latitude: lat.toFixed(3),
+    longitude: lng.toFixed(3),
+    hourly: 'precipitation_probability,precipitation,weather_code',
+    forecast_hours: String(Math.min(48, Math.ceil(hoursAhead) + 2)),
+    timezone: 'auto',
+  });
+  const response = await fetchWithTimeout(`${API_URL}?${params}`, { timeoutMs: 10000 });
+  if (!response.ok) throw new Error(`Wetter nicht verfügbar (Fehler ${response.status}).`);
+  const data = await response.json();
+
+  // Die Stunde heraussuchen, in die der Zeitpunkt fällt.
+  const toEpoch = (time) => Date.parse(`${time}Z`) - data.utc_offset_seconds * 1000;
+  let index = 0;
+  data.hourly.time.forEach((time, i) => {
+    if (toEpoch(time) <= atMs) index = i;
+  });
+  return {
+    probability: data.hourly.precipitation_probability[index] ?? 0,
+    mm: data.hourly.precipitation[index] ?? 0,
+    code: data.hourly.weather_code[index] ?? 0,
+  };
 }
